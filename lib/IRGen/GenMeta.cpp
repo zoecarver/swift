@@ -4190,6 +4190,7 @@ SpecialProtocol irgen::getSpecialProtocolID(ProtocolDecl *P) {
   case KnownProtocolKind::ExpressibleByColorLiteral:
   case KnownProtocolKind::ExpressibleByImageLiteral:
   case KnownProtocolKind::ExpressibleByFileReferenceLiteral:
+  // SWIFT_ENABLE_TENSORFLOW
   case KnownProtocolKind::ExpressibleByBuiltinBooleanLiteral:
   case KnownProtocolKind::ExpressibleByBuiltinExtendedGraphemeClusterLiteral:
   case KnownProtocolKind::ExpressibleByBuiltinFloatLiteral:
@@ -4205,6 +4206,17 @@ SpecialProtocol irgen::getSpecialProtocolID(ProtocolDecl *P) {
   case KnownProtocolKind::Encodable:
   case KnownProtocolKind::Decodable:
   case KnownProtocolKind::StringInterpolationProtocol:
+  // SWIFT_ENABLE_TENSORFLOW
+  case KnownProtocolKind::FloatingPoint:
+  case KnownProtocolKind::AdditiveArithmetic:
+  case KnownProtocolKind::Numeric:
+  case KnownProtocolKind::KeyPathIterable:
+  case KnownProtocolKind::TensorArrayProtocol:
+  case KnownProtocolKind::TensorGroup:
+  case KnownProtocolKind::TensorFlowDataTypeCompatible:
+  case KnownProtocolKind::TensorProtocol:
+  case KnownProtocolKind::VectorNumeric:
+  case KnownProtocolKind::Differentiable:
     return SpecialProtocol::None;
   }
 

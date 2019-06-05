@@ -108,6 +108,10 @@ namespace swift {
   class TypeAliasDecl;
   class VarDecl;
   class UnifiedStatsReporter;
+  // SWIFT_ENABLE_TENSORFLOW
+  class VectorSpace;
+  class AutoDiffParameterIndices;
+  class DifferentiableAttr;
 
   enum class KnownProtocolKind : uint8_t;
 
@@ -265,6 +269,15 @@ public:
   /// Cache of remapped types (useful for diagnostics).
   llvm::StringMap<Type> RemappedTypes;
 
+  /// Cache of autodiff-associated vector spaces.
+  llvm::DenseMap<Type, Optional<VectorSpace>> AutoDiffVectorSpaces;
+
+  /// Cache of `@differentiable` attributes keyed by parameter indices. This
+  /// helps us diagnose multiple `@differentiable`s that are with respect to the
+  /// same set of parameters.
+  llvm::DenseMap<std::pair<Decl *, AutoDiffParameterIndices *>,
+                 DifferentiableAttr *> DifferentiableAttrs;
+
 private:
   /// The current generation number, which reflects the number of
   /// times that external modules have been loaded.
@@ -285,11 +298,11 @@ private:
   /// Cache of module names that fail the 'canImport' test in this context.
   llvm::SmallPtrSet<Identifier, 8> FailedModuleImportNames;
   
+public:
   /// Retrieve the allocator for the given arena.
   llvm::BumpPtrAllocator &
   getAllocator(AllocationArena arena = AllocationArena::Permanent) const;
 
-public:
   /// Allocate - Allocate memory from the ASTContext bump pointer.
   void *Allocate(unsigned long bytes, unsigned alignment,
                  AllocationArena arena = AllocationArena::Permanent) const {
@@ -461,6 +474,19 @@ public:
 
   /// Retrieve the type Swift.AnyObject.
   CanType getAnyObjectType() const;
+
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Retrieve the decl for TensorFlow.TensorHandle iff the TensorFlow module
+  /// has been imported.  Otherwise, this returns null.
+  ClassDecl *getTensorHandleDecl() const;
+
+  /// Retrieve the decl for TensorFlow.TensorShape iff the TensorFlow module
+  /// has been imported.  Otherwise, this returns null.
+  StructDecl *getTensorShapeDecl() const;
+
+  /// Retrieve the decl for TensorFlow.TensorDataType iff the TensorFlow module
+  /// has been imported.  Otherwise, this returns null.
+  StructDecl *getTensorDataTypeDecl() const;
 
   /// Retrieve the type Swift.Never.
   CanType getNeverType() const;

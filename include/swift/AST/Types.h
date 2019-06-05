@@ -17,6 +17,8 @@
 #ifndef SWIFT_TYPES_H
 #define SWIFT_TYPES_H
 
+// SWIFT_ENABLE_TENSORFLOW
+#include "swift/AST/AutoDiff.h"
 #include "swift/AST/DeclContext.h"
 #include "swift/AST/GenericParamKey.h"
 #include "swift/AST/Identifier.h"
@@ -77,6 +79,8 @@ namespace swift {
   class ProtocolConformance;
   enum PointerTypeKind : unsigned;
   struct ValueOwnershipKind;
+  // SWIFT_ENABLE_TENSORFLOW
+  struct SILAutoDiffConfig;
 
   enum class TypeKind : uint8_t {
 #define TYPE(id, parent) id,
@@ -289,8 +293,9 @@ class alignas(1 << TypeAlignInBits) TypeBase {
   }
 
 protected:
-  enum { NumAFTExtInfoBits = 6 };
-  enum { NumSILExtInfoBits = 6 };
+  // SWIFT_ENABLE_TENSORFLOW
+  enum { NumAFTExtInfoBits = 8 };
+  enum { NumSILExtInfoBits = 7 };
   union { uint64_t OpaqueBits;
 
   SWIFT_INLINE_BITFIELD_BASE(TypeBase, bitmax(NumTypeKindBits,8) +
@@ -1090,6 +1095,19 @@ public:
   /// object type.
   TypeTraitResult canBeClass();
 
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Return the associated tangent type. Return the null type if there is no
+  /// associated tangent type.
+  ///
+  /// If the type conforms to `Differentiable`, then the associated
+  /// tangent type is the associated `TangentVector` from the `Differentiable`
+  /// requirement. If the type is a tuple, then the associated tangent type is
+  /// the elementwise tangent type of its elements. If the type is a builtin
+  /// float, then the associated tangent type is itself. Otherwise, there is no
+  /// associated type.
+  Optional<VectorSpace>
+  getAutoDiffAssociatedTangentSpace(LookupConformanceFn lookupConformance);
+
 private:
   // Make vanilla new/delete illegal for Types.
   void *operator new(size_t Bytes) throw() = delete;
@@ -1737,8 +1755,9 @@ class ParameterTypeFlags {
     AutoClosure = 1 << 1,
     OwnershipShift = 2,
     Ownership   = 7 << OwnershipShift,
-
-    NumBits = 5
+    // SWIFT_ENABLE_TENSORFLOW
+    NonDifferentiable = 1 << 5,
+    NumBits = 6
   };
   OptionSet<ParameterFlags> value;
   static_assert(NumBits < 8*sizeof(OptionSet<ParameterFlags>), "overflowed");
@@ -1752,14 +1771,18 @@ public:
   }
 
   ParameterTypeFlags(bool variadic, bool autoclosure,
-                     ValueOwnership ownership)
+                     // SWIFT_ENABLE_TENSORFLOW
+                     ValueOwnership ownership, bool nonDifferentiable)
       : value((variadic ? Variadic : 0) | (autoclosure ? AutoClosure : 0) |
-              uint8_t(ownership) << OwnershipShift) {}
+              // SWIFT_ENABLE_TENSORFLOW
+              (uint8_t(ownership) << OwnershipShift) |
+              (nonDifferentiable ? NonDifferentiable : 0)) {}
 
   /// Create one from what's present in the parameter type
   inline static ParameterTypeFlags
+  // SWIFT_ENABLE_TENSORFLOW
   fromParameterType(Type paramTy, bool isVariadic, bool isAutoClosure,
-                    ValueOwnership ownership);
+                    ValueOwnership ownership, bool isNonDifferentiable);
 
   bool isNone() const { return !value; }
   bool isVariadic() const { return value.contains(Variadic); }
@@ -1767,6 +1790,8 @@ public:
   bool isInOut() const { return getValueOwnership() == ValueOwnership::InOut; }
   bool isShared() const { return getValueOwnership() == ValueOwnership::Shared;}
   bool isOwned() const { return getValueOwnership() == ValueOwnership::Owned; }
+  // SWIFT_ENABLE_TENSORFLOW
+  bool isNonDifferentiable() const { return value.contains(NonDifferentiable); }
 
   ValueOwnership getValueOwnership() const {
     return ValueOwnership((value.toRaw() & Ownership) >> OwnershipShift);
@@ -1799,8 +1824,15 @@ public:
 
   ParameterTypeFlags withAutoClosure(bool isAutoClosure) const {
     return ParameterTypeFlags(isAutoClosure
-                                  ? value | ParameterTypeFlags::AutoClosure
-                                  : value - ParameterTypeFlags::AutoClosure);
+                              ? value | ParameterTypeFlags::AutoClosure
+                              : value - ParameterTypeFlags::AutoClosure);
+  }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  ParameterTypeFlags withNonDifferentiable(bool nonDifferentiable) const {
+    return ParameterTypeFlags(nonDifferentiable
+                              ? value | ParameterTypeFlags::NonDifferentiable
+                              : value - ParameterTypeFlags::NonDifferentiable);
   }
 
   bool operator ==(const ParameterTypeFlags &other) const {
@@ -1869,7 +1901,9 @@ public:
   ParameterTypeFlags asParamFlags() const {
     return ParameterTypeFlags(/*variadic*/ false,
                               /*autoclosure*/ false,
-                              getValueOwnership());
+                              // SWIFT_ENABLE_TENSORFLOW
+                              getValueOwnership(),
+                              /*nondifferentiable*/ false);
   }
 
   bool operator ==(const YieldTypeFlags &other) const {
@@ -2579,7 +2613,7 @@ enum class FunctionTypeRepresentation : uint8_t {
   /// A C function pointer, which is thin and also uses the C calling
   /// convention.
   CFunctionPointer,
-  
+
   /// The value of the greatest AST function representation.
   Last = CFunctionPointer,
 };
@@ -2606,7 +2640,7 @@ enum class SILFunctionTypeRepresentation : uint8_t {
   /// A C function pointer, which is thin and also uses the C calling
   /// convention.
   CFunctionPointer = uint8_t(FunctionTypeRepresentation::CFunctionPointer),
-  
+
   /// The value of the greatest AST function representation.
   LastAST = CFunctionPointer,
 
@@ -2738,6 +2772,10 @@ public:
     /// Whether the parameter is marked 'owned'
     bool isOwned() const { return Flags.isOwned(); }
 
+    // SWIFT_ENABLE_TENSORFLOW
+    /// Whether the parameter is marked '@nondiff'.
+    bool isNonDifferentiable() const { return Flags.isNonDifferentiable(); }
+
     ValueOwnership getValueOwnership() const {
       return Flags.getValueOwnership();
     }
@@ -2827,14 +2865,17 @@ public:
     // If bits are added or removed, then TypeBase::AnyFunctionTypeBits
     // and NumMaskBits must be updated, and they must match.
     //
-    //   |representation|noEscape|throws|
-    //   |    0 .. 3    |    4   |   5  |
+    //   SWIFT_ENABLE_TENSORFLOW
+    //   |representation|noEscape|throws|differentiability|
+    //   |    0 .. 3    |    4   |   5  |      6 .. 8     |
     //
     enum : unsigned {
       RepresentationMask     = 0xF << 0,
       NoEscapeMask           = 1 << 4,
       ThrowsMask             = 1 << 5,
-      NumMaskBits            = 6
+      // SWIFT_ENABLE_TENSORFLOW
+      DifferentiableMask     = 1 << 7,
+      NumMaskBits            = 8
     };
 
     unsigned Bits; // Naturally sized for speed.
@@ -2857,13 +2898,18 @@ public:
     // Constructor with no defaults.
     ExtInfo(Representation Rep,
             bool IsNoEscape,
-            bool Throws)
+            // SWIFT_ENABLE_TENSORFLOW
+            bool Throws, bool IsDifferentiable)
       : ExtInfo(Rep, Throws) {
       Bits |= (IsNoEscape ? NoEscapeMask : 0);
+      // SWIFT_ENABLE_TENSORFLOW
+      Bits |= (IsDifferentiable ? DifferentiableMask : 0);
     }
 
     bool isNoEscape() const { return Bits & NoEscapeMask; }
     bool throws() const { return Bits & ThrowsMask; }
+    // SWIFT_ENABLE_TENSORFLOW
+    bool isDifferentiable() const { return Bits & DifferentiableMask; }
     Representation getRepresentation() const {
       unsigned rawRep = Bits & RepresentationMask;
       assert(rawRep <= unsigned(Representation::Last)
@@ -2926,6 +2972,14 @@ public:
         return ExtInfo(Bits | ThrowsMask);
       else
         return ExtInfo(Bits & ~ThrowsMask);
+    }
+    // SWIFT_ENABLE_TENSORFLOW
+    LLVM_NODISCARD
+    ExtInfo withDifferentiable(bool isDifferentiable = true) const {
+      if (isDifferentiable)
+        return ExtInfo(Bits | DifferentiableMask);
+      else
+        return ExtInfo(Bits & ~DifferentiableMask);
     }
 
     unsigned getFuncAttrKey() const {
@@ -3011,6 +3065,35 @@ public:
     return getExtInfo().getRepresentation();
   }
 
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Given `indices`, `differentiationOrder`, and `kind`, calculates the type
+  /// of the corresponding autodiff associated function.
+  ///
+  /// By default, if the original type has a self parameter list and parameter
+  /// indices include self, the computed associated function type will return a
+  /// linear map taking/returning self's tangent *last* instead of first, for
+  /// consistency with SIL.
+  ///
+  /// If `makeSelfParamFirst` is true, self's tangent is reordered to appear
+  /// first. This should be used during type-checking, e.g. type-checking
+  /// `@differentiable` and `@differentiating` attributes.
+  ///
+  /// \note The original function type (`self`) need not be `@differentiable`.
+  /// The resulting function will preserve all `ExtInfo` of the original
+  /// function, including `@differentiable`.
+  AnyFunctionType *getAutoDiffAssociatedFunctionType(
+      AutoDiffParameterIndices *indices, unsigned resultIndex,
+      unsigned differentiationOrder, AutoDiffAssociatedFunctionKind kind,
+      LookupConformanceFn lookupConformance,
+      GenericSignature *whereClauseGenericSignature = nullptr,
+      bool makeSelfParamFirst = false);
+
+  /// Given the type of an autodiff associated function, returns the
+  /// corresponding original function type.
+  AnyFunctionType *getAutoDiffOriginalFunctionType();
+
+  AnyFunctionType *getWithoutDifferentiability() const;
+
   /// True if the parameter declaration it is attached to is guaranteed
   /// to not persist the closure for longer than the duration of the call.
   bool isNoEscape() const {
@@ -3019,6 +3102,11 @@ public:
 
   bool throws() const {
     return getExtInfo().throws();
+  }
+  
+  // SWIFT_ENABLE_TENSORFLOW
+  bool isDifferentiable() const {
+    return getExtInfo().isDifferentiable();
   }
 
   /// Returns a new function type exactly like this one but with the ExtInfo
@@ -3349,13 +3437,33 @@ inline bool isGuaranteedParameter(ParameterConvention conv) {
   llvm_unreachable("bad convention kind");
 }
 
+/// SWIFT_ENABLE_TENSORFLOW
+/// Determines whether a differentiable function type is differentiable with
+/// respect to this parameter.
+enum class SILParameterDifferentiability : unsigned {
+  /// The function type is differentiable with respect to this parameter, or
+  /// differentiability is not applicable because the function is not
+  /// differentiable.
+  DifferentiableOrNotApplicable,
+
+  /// The function type is not differentiable with respect to this parameter.
+  NotDifferentiable,
+};
+
 /// A parameter type and the rules for passing it.
 class SILParameterInfo {
   llvm::PointerIntPair<CanType, 3, ParameterConvention> TypeAndConvention;
+
+  // SWIFT_ENABLE_TENSORFLOW
+  SILParameterDifferentiability Differentiability : 1;
 public:
   SILParameterInfo() = default;//: Ty(), Convention((ParameterConvention)0) {}
-  SILParameterInfo(CanType type, ParameterConvention conv)
-    : TypeAndConvention(type, conv) {
+  // SWIFT_ENABLE_TENSORFLOW
+  SILParameterInfo(
+      CanType type, ParameterConvention conv,
+      SILParameterDifferentiability differentiability =
+          SILParameterDifferentiability::DifferentiableOrNotApplicable)
+    : TypeAndConvention(type, conv), Differentiability(differentiability) {
     assert(type->isLegalSILType() && "SILParameterInfo has illegal SIL type");
   }
 
@@ -3400,6 +3508,16 @@ public:
     return isGuaranteedParameter(getConvention());
   }
 
+  // SWIFT_ENABLE_TENSORFLOW
+  SILParameterDifferentiability getDifferentiability() const {
+    return Differentiability;
+  }
+
+  SILParameterInfo getWithDifferentiability(
+      SILParameterDifferentiability differentiability) const {
+    return SILParameterInfo(getType(), getConvention(), differentiability);
+  }
+
   /// The SIL storage type determines the ABI for arguments based purely on the
   /// formal parameter conventions. The actual SIL type for the argument values
   /// may differ in canonical SIL. In particular, opaque values require indirect
@@ -3410,7 +3528,8 @@ public:
 
   /// Return a version of this parameter info with the type replaced.
   SILParameterInfo getWithType(CanType type) const {
-    return SILParameterInfo(type, getConvention());
+    // SWIFT_ENABLE_TENSORFLOW
+    return SILParameterInfo(type, getConvention(), getDifferentiability());
   }
 
   /// Transform this SILParameterInfo by applying the user-provided
@@ -3426,6 +3545,8 @@ public:
   void profile(llvm::FoldingSetNodeID &id) {
     id.AddPointer(getType().getPointer());
     id.AddInteger((unsigned)getConvention());
+    // SWIFT_ENABLE_TENSORFLOW
+    id.AddInteger((unsigned)getDifferentiability());
   }
 
   void dump() const;
@@ -3439,7 +3560,10 @@ public:
   }
 
   bool operator==(SILParameterInfo rhs) const {
-    return getType() == rhs.getType() && getConvention() == rhs.getConvention();
+    // SWIFT_ENABLE_TENSORFLOW
+    return getType() == rhs.getType() &&
+           getConvention() == rhs.getConvention() &&
+           getDifferentiability() == rhs.getDifferentiability();
   }
   bool operator!=(SILParameterInfo rhs) const {
     return !(*this == rhs);
@@ -3624,14 +3748,17 @@ public:
     // If bits are added or removed, then TypeBase::SILFunctionTypeBits
     // and NumMaskBits must be updated, and they must match.
 
-    //   |representation|pseudogeneric| noescape |
-    //   |    0 .. 3    |      4      |     5    |
+    // SWIFT_ENABLE_TENSORFLOW
+    //   |representation|pseudogeneric| noescape | differentiability |
+    //   |    0 .. 3    |      4      |     5    |      6 .. 8       |
     //
     enum : unsigned {
       RepresentationMask = 0xF << 0,
       PseudogenericMask  = 1 << 4,
       NoEscapeMask       = 1 << 5,
-      NumMaskBits        = 6
+      // SWIFT_ENABLE_TENSORFLOW
+      DifferentiableMask = 1 << 6,
+      NumMaskBits        = 7
     };
 
     unsigned Bits; // Naturally sized for speed.
@@ -3645,10 +3772,14 @@ public:
     ExtInfo() : Bits(0) { }
 
     // Constructor for polymorphic type.
-    ExtInfo(Representation rep, bool isPseudogeneric, bool isNoEscape) {
+    // SWIFT_ENABLE_TENSORFLOW
+    ExtInfo(Representation rep, bool isPseudogeneric, bool isNoEscape,
+            bool isDifferentiable) {
       Bits = ((unsigned) rep) |
              (isPseudogeneric ? PseudogenericMask : 0) |
-             (isNoEscape ? NoEscapeMask : 0);
+             // SWIFT_ENABLE_TENSORFLOW
+             (isNoEscape ? NoEscapeMask : 0) |
+             (isDifferentiable ? DifferentiableMask : 0);
     }
 
     /// Is this function pseudo-generic?  A pseudo-generic function
@@ -3657,6 +3788,9 @@ public:
 
     // Is this function guaranteed to be no-escape by the type system?
     bool isNoEscape() const { return Bits & NoEscapeMask; }
+    
+    // SWIFT_ENABLE_TENSORFLOW
+    bool isDifferentiable() const { return Bits & DifferentiableMask; }
 
     /// What is the abstract representation of this function value?
     Representation getRepresentation() const {
@@ -3718,6 +3852,13 @@ public:
         return ExtInfo(Bits | NoEscapeMask);
       else
         return ExtInfo(Bits & ~NoEscapeMask);
+    }
+    // SWIFT_ENABLE_TENSORFLOW
+    ExtInfo withDifferentiable(bool isDifferentiable = true) const {
+      if (isDifferentiable)
+        return ExtInfo(Bits | DifferentiableMask);
+      else
+        return ExtInfo(Bits & ~DifferentiableMask);
     }
 
     unsigned getFuncAttrKey() const {
@@ -4000,6 +4141,26 @@ public:
 
   CanType getSelfInstanceType() const;
 
+  // SWIFT_ENABLE_TENSORFLOW
+  CanSILFunctionType getWithDifferentiability(
+      unsigned differentiationOrder, AutoDiffIndexSubset *parameterIndices);
+
+  CanSILFunctionType getWithoutDifferentiability();
+
+  /// Returns the type of a differentiation function that is associated with
+  /// a function of this type.
+  CanSILFunctionType getAutoDiffAssociatedFunctionType(
+      AutoDiffIndexSubset *parameterIndices, unsigned resultIndex,
+      unsigned differentiationOrder, AutoDiffAssociatedFunctionKind kind,
+      SILModule &module, LookupConformanceFn lookupConformance,
+      CanGenericSignature whereClauseGenericSignature = nullptr);
+
+  /// Returns a bit vector that specifices which parameters you can
+  /// differentiate with respect to for this differentiable function type. (e.g.
+  /// which parameters are not @nondiff). The function type must be
+  /// differentiable.
+  AutoDiffIndexSubset *getDifferentiationParameterIndices();
+
   /// If this is a @convention(witness_method) function with a class
   /// constrained self parameter, return the class constraint for the
   /// Self type.
@@ -4047,6 +4208,11 @@ public:
   bool isTrivialNoEscape() const {
     return isNoEscape() &&
            getRepresentation() == SILFunctionTypeRepresentation::Thick;
+  }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  bool isDifferentiable() const {
+    return getExtInfo().isDifferentiable();
   }
 
   bool isNoReturnFunction() const; // Defined in SILType.cpp
@@ -5497,7 +5663,9 @@ inline TupleTypeElt TupleTypeElt::getWithType(Type T) const {
 inline ParameterTypeFlags
 ParameterTypeFlags::fromParameterType(Type paramTy, bool isVariadic,
                                       bool isAutoClosure,
-                                      ValueOwnership ownership) {
+                                      // SWIFT_ENABLE_TENSORFLOW
+                                      ValueOwnership ownership,
+                                      bool isNonDifferentiable) {
   // FIXME(Remove InOut): The last caller that needs this is argument
   // decomposition.  Start by enabling the assertion there and fixing up those
   // callers, then remove this, then remove
@@ -5507,7 +5675,8 @@ ParameterTypeFlags::fromParameterType(Type paramTy, bool isVariadic,
            ownership == ValueOwnership::InOut);
     ownership = ValueOwnership::InOut;
   }
-  return {isVariadic, isAutoClosure, ownership};
+  // SWIFT_ENABLE_TENSORFLOW
+  return {isVariadic, isAutoClosure, ownership, isNonDifferentiable};
 }
 
 inline const Type *BoundGenericType::getTrailingObjectsPointer() const {

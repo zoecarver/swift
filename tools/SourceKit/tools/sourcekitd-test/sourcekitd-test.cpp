@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "sourcekitd/FileSystemProvider.h"
 #include "sourcekitd/sourcekitd.h"
 
 #include "SourceKit/Support/Concurrency.h"
@@ -17,6 +18,7 @@
 #include "swift/Demangling/ManglingMacros.h"
 #include "clang/Rewrite/Core/RewriteBuffer.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/CommandLine.h"
@@ -26,7 +28,11 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/Signals.h"
+<<<<<<< HEAD
 #include "llvm/Support/Threading.h"
+=======
+#include "llvm/Support/VirtualFileSystem.h"
+>>>>>>> cec88da425
 #include "llvm/Support/raw_ostream.h"
 #include <fstream>
 #if defined(__unix__) || (defined(__APPLE__) && defined(__MACH__))
@@ -86,6 +92,7 @@ static bool handleResponse(sourcekitd_response_t Resp, const TestOptions &Opts,
                            std::unique_ptr<llvm::MemoryBuffer> SourceBuf,
                            TestOptions *InitOpts);
 static void printCursorInfo(sourcekitd_variant_t Info, StringRef Filename,
+                            const llvm::StringMap<std::string> &VFSFiles,
                             llvm::raw_ostream &OS);
 static void printNameTranslationInfo(sourcekitd_variant_t Info, llvm::raw_ostream &OS);
 static void printRangeInfo(sourcekitd_variant_t Info, StringRef Filename,
@@ -95,6 +102,7 @@ static void printDocInfo(sourcekitd_variant_t Info, StringRef Filename);
 static void printInterfaceGen(sourcekitd_variant_t Info, bool CheckASCII);
 static void printSemanticInfo();
 static void printRelatedIdents(sourcekitd_variant_t Info, StringRef Filename,
+                               const llvm::StringMap<std::string> &VFSFiles,
                                llvm::raw_ostream &OS);
 static void printFoundInterface(sourcekitd_variant_t Info,
                                 llvm::raw_ostream &OS);
@@ -118,17 +126,21 @@ static void prepareMangleRequest(sourcekitd_object_t Req,
 static void printMangleResults(sourcekitd_variant_t Info, raw_ostream &OS);
 static void printStatistics(sourcekitd_variant_t Info, raw_ostream &OS);
 
-static unsigned resolveFromLineCol(unsigned Line, unsigned Col,
-                                   StringRef Filename);
+static unsigned
+resolveFromLineCol(unsigned Line, unsigned Col, StringRef Filename,
+                   const llvm::StringMap<std::string> &VFSFiles);
 static unsigned resolveFromLineCol(unsigned Line, unsigned Col,
                                    llvm::MemoryBuffer *InputBuf);
-static std::pair<unsigned, unsigned> resolveToLineCol(unsigned Offset,
-                                                      StringRef Filename);
+static std::pair<unsigned, unsigned>
+resolveToLineCol(unsigned Offset, StringRef Filename,
+                 const llvm::StringMap<std::string> &VFSFiles);
 static std::pair<unsigned, unsigned> resolveToLineCol(unsigned Offset,
                                                   llvm::MemoryBuffer *InputBuf);
 static std::pair<unsigned, unsigned> resolveToLineColFromBuf(unsigned Offset,
                                                       const char *Buf);
-static llvm::MemoryBuffer *getBufferForFilename(StringRef Filename);
+static llvm::MemoryBuffer *
+getBufferForFilename(StringRef Filename,
+                     const llvm::StringMap<std::string> &VFSFiles);
 
 static void notification_receiver(sourcekitd_response_t resp);
 
@@ -212,12 +224,51 @@ static void printBufferedNotifications(bool syncWithService = true) {
   });
 }
 
+<<<<<<< HEAD
 struct skt_args {
   int argc;
   const char **argv;
   int ret;
 };
 static void skt_main(skt_args *args);
+=======
+/// A simple configurable FileSystemProvider, useful for tests that exercise
+/// the FileSystemProvider code.
+class TestFileSystemProvider : public SourceKit::FileSystemProvider {
+  /// Provides the real filesystem, overlayed with an InMemoryFileSystem that
+  /// contains specified files at specified locations.
+  /// \param Args The locations of the InMemoryFileSystem files, interleaved
+  //              with paths on the real filesystem to fetch their contents
+  //              from.
+  llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem>
+  getFileSystem(const llvm::SmallVectorImpl<const char *> &Args,
+                llvm::SmallVectorImpl<char> &ErrBuf) override {
+    auto InMemoryFS = llvm::IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem>(
+        new llvm::vfs::InMemoryFileSystem());
+    for (unsigned i = 0; i < Args.size(); i += 2) {
+      const char *InMemoryName = Args[i];
+      const char *TargetPath = Args[i + 1];
+      auto TargetBufferOrErr = llvm::MemoryBuffer::getFile(TargetPath);
+      if (auto Err = TargetBufferOrErr.getError()) {
+        llvm::raw_svector_ostream ErrStream(ErrBuf);
+        ErrStream << "Error reading target file '" << TargetPath
+                  << "': " << Err.message() << "\n";
+        return nullptr;
+      }
+      auto RenamedTargetBuffer = llvm::MemoryBuffer::getMemBufferCopy(
+          TargetBufferOrErr.get()->getBuffer(), InMemoryName);
+      InMemoryFS->addFile(InMemoryName, 0, std::move(RenamedTargetBuffer));
+    }
+
+    auto OverlayFS = llvm::IntrusiveRefCntPtr<llvm::vfs::OverlayFileSystem>(
+        new llvm::vfs::OverlayFileSystem(llvm::vfs::getRealFileSystem()));
+    OverlayFS->pushOverlay(std::move(InMemoryFS));
+    return OverlayFS;
+  }
+};
+
+static int skt_main(int argc, const char **argv);
+>>>>>>> cec88da425
 
 int main(int argc, const char **argv) {
   dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
@@ -235,6 +286,11 @@ static void skt_main(skt_args *args) {
   llvm::sys::PrintStackTraceOnErrorSignal(argv[0]);
 
   sourcekitd_initialize();
+
+#ifdef SWIFT_SOURCEKIT_USE_INPROC_LIBRARY
+  TestFileSystemProvider testFileSystemProvider;
+  SourceKit::setGlobalFileSystemProvider("testvfs", &testFileSystemProvider);
+#endif
 
   sourcekitd_set_notification_handler(^(sourcekitd_response_t resp) {
     notification_receiver(resp);
@@ -383,7 +439,7 @@ static sourcekitd_response_t sendRequestSync(sourcekitd_object_t req,
 }
 
 static int handleJsonRequestPath(StringRef QueryPath, const TestOptions &Opts) {
-  auto Buffer = getBufferForFilename(QueryPath)->getBuffer();
+  auto Buffer = getBufferForFilename(QueryPath, Opts.VFSFiles)->getBuffer();
   char *Err = nullptr;
   auto Req = sourcekitd_request_create_from_yaml(Buffer.data(), &Err);
   if (!Req) {
@@ -455,7 +511,6 @@ static int setExpectedTypes(const sourcekitd_test::TestOptions &Opts,
 }
 
 static int handleTestInvocation(TestOptions Opts, TestOptions &InitOpts) {
-
   if (!Opts.JsonRequestPath.empty())
     return handleJsonRequestPath(Opts.JsonRequestPath, Opts);
 
@@ -473,7 +528,7 @@ static int handleTestInvocation(TestOptions Opts, TestOptions &InitOpts) {
   std::string SemaName = !Opts.Name.empty() ? Opts.Name : SourceFile;
 
   if (!Opts.TextInputFile.empty()) {
-    auto Buf = getBufferForFilename(Opts.TextInputFile);
+    auto Buf = getBufferForFilename(Opts.TextInputFile, Opts.VFSFiles);
     Opts.SourceText = Buf->getBuffer();
   }
 
@@ -482,7 +537,8 @@ static int handleTestInvocation(TestOptions Opts, TestOptions &InitOpts) {
     SourceBuf = llvm::MemoryBuffer::getMemBuffer(*Opts.SourceText, Opts.SourceFile);
   } else if (!SourceFile.empty()) {
     SourceBuf = llvm::MemoryBuffer::getMemBuffer(
-          getBufferForFilename(SourceFile)->getBuffer(), SourceFile);
+        getBufferForFilename(SourceFile, Opts.VFSFiles)->getBuffer(),
+        SourceFile);
   }
 
   // FIXME: we should detect if offset is required but not set.
@@ -647,7 +703,8 @@ static int handleTestInvocation(TestOptions Opts, TestOptions &InitOpts) {
     sourcekitd_request_dictionary_set_int64(Req, KeyOffset, ByteOffset);
     auto Length = Opts.Length;
     if (Opts.Length == 0 && Opts.EndLine > 0) {
-      auto EndOff = resolveFromLineCol(Opts.EndLine, Opts.EndCol, SourceFile);
+      auto EndOff = resolveFromLineCol(Opts.EndLine, Opts.EndCol, SourceFile,
+                                       Opts.VFSFiles);
       Length = EndOff - ByteOffset;
     }
     sourcekitd_request_dictionary_set_int64(Req, KeyLength, Length);
@@ -913,7 +970,8 @@ static int handleTestInvocation(TestOptions Opts, TestOptions &InitOpts) {
       llvm::errs() << "Missing '-rename-spec <file path>'\n";
       return 1;
     }
-    auto Buffer = getBufferForFilename(Opts.RenameSpecPath)->getBuffer();
+    auto Buffer =
+        getBufferForFilename(Opts.RenameSpecPath, Opts.VFSFiles)->getBuffer();
     char *Err = nullptr;
     auto RenameSpec = sourcekitd_request_create_from_yaml(Buffer.data(), &Err);
     if (!RenameSpec) {
@@ -932,7 +990,7 @@ static int handleTestInvocation(TestOptions Opts, TestOptions &InitOpts) {
 
   if (!SourceFile.empty()) {
     if (Opts.PassAsSourceText) {
-      auto Buf = getBufferForFilename(SourceFile);
+      auto Buf = getBufferForFilename(SourceFile, Opts.VFSFiles);
       sourcekitd_request_dictionary_set_string(Req, KeySourceText,
                                                Buf->getBufferStart());
     }
@@ -980,6 +1038,18 @@ static int handleTestInvocation(TestOptions Opts, TestOptions &InitOpts) {
     }
   }
 
+  if (!Opts.VFSFiles.empty()) {
+    sourcekitd_request_dictionary_set_string(Req, KeyVFSName, "testvfs");
+    sourcekitd_object_t VFSArgs = sourcekitd_request_array_create(nullptr, 0);
+    for (auto &NameAndTarget : Opts.VFSFiles) {
+      sourcekitd_request_array_set_string(VFSArgs, SOURCEKITD_ARRAY_APPEND,
+                                          NameAndTarget.first().data());
+      sourcekitd_request_array_set_string(VFSArgs, SOURCEKITD_ARRAY_APPEND,
+                                          NameAndTarget.second.c_str());
+    }
+    sourcekitd_request_dictionary_set_value(Req, KeyVFSArgs, VFSArgs);
+    sourcekitd_request_release(VFSArgs);
+  }
 
   if (!Opts.isAsyncRequest) {
     sourcekitd_response_t Resp = sendRequestSync(Req, Opts);
@@ -1088,11 +1158,11 @@ static bool handleResponse(sourcekitd_response_t Resp, const TestOptions &Opts,
       break;
 
     case SourceKitRequest::RelatedIdents:
-      printRelatedIdents(Info, SourceFile, llvm::outs());
+      printRelatedIdents(Info, SourceFile, Opts.VFSFiles, llvm::outs());
       break;
 
     case SourceKitRequest::CursorInfo:
-      printCursorInfo(Info, SourceFile, llvm::outs());
+      printCursorInfo(Info, SourceFile, Opts.VFSFiles, llvm::outs());
       break;
 
     case SourceKitRequest::NameTranslation:
@@ -1153,7 +1223,8 @@ static bool handleResponse(sourcekitd_response_t Resp, const TestOptions &Opts,
     case SourceKitRequest::Structure:
       sourcekitd_response_description_dump_filedesc(Resp, STDOUT_FILENO);
       if (Opts.ReplaceText.hasValue()) {
-        unsigned Offset = resolveFromLineCol(Opts.Line, Opts.Col, SourceFile);
+        unsigned Offset =
+            resolveFromLineCol(Opts.Line, Opts.Col, SourceFile, Opts.VFSFiles);
         unsigned Length = Opts.Length;
         sourcekitd_object_t EdReq = sourcekitd_request_dictionary_create(nullptr,
                                                                     nullptr, 0);
@@ -1381,6 +1452,7 @@ static void printNameTranslationInfo(sourcekitd_variant_t Info,
 }
 
 static void printCursorInfo(sourcekitd_variant_t Info, StringRef FilenameIn,
+                            const llvm::StringMap<std::string> &VFSFiles,
                             llvm::raw_ostream &OS) {
   const char *InternalDiagnostic =
       sourcekitd_variant_dictionary_get_string(Info, KeyInternalDiagnostic);
@@ -1496,9 +1568,10 @@ static void printCursorInfo(sourcekitd_variant_t Info, StringRef FilenameIn,
   if (Offset.hasValue()) {
     if (Filename != FilePath)
       OS << FilePath << ":";
-    auto LineCol = resolveToLineCol(Offset.getValue(), FilePath);
+    auto LineCol = resolveToLineCol(Offset.getValue(), FilePath, VFSFiles);
     OS << LineCol.first << ':' << LineCol.second;
-    auto EndLineCol = resolveToLineCol(Offset.getValue()+Length, FilePath);
+    auto EndLineCol =
+        resolveToLineCol(Offset.getValue() + Length, FilePath, VFSFiles);
     OS << '-' << EndLineCol.first << ':' << EndLineCol.second;
   }
   OS << ")\n";
@@ -1854,6 +1927,7 @@ static void printInterfaceGen(sourcekitd_variant_t Info, bool CheckASCII) {
 }
 
 static void printRelatedIdents(sourcekitd_variant_t Info, StringRef Filename,
+                               const llvm::StringMap<std::string> &VFSFiles,
                                llvm::raw_ostream &OS) {
   OS << "START RANGES\n";
   sourcekitd_variant_t Res =
@@ -1862,7 +1936,7 @@ static void printRelatedIdents(sourcekitd_variant_t Info, StringRef Filename,
     sourcekitd_variant_t Range = sourcekitd_variant_array_get_value(Res, i);
     int64_t Offset = sourcekitd_variant_dictionary_get_int64(Range, KeyOffset);
     int64_t Length = sourcekitd_variant_dictionary_get_int64(Range, KeyLength);
-    auto LineCol = resolveToLineCol(Offset, Filename);
+    auto LineCol = resolveToLineCol(Offset, Filename, VFSFiles);
     OS << LineCol.first << ':' << LineCol.second << " - " << Length << '\n';
   }
   OS << "END RANGES\n";
@@ -2064,8 +2138,9 @@ static void expandPlaceholders(llvm::MemoryBuffer *SourceBuf,
 }
 
 static std::pair<unsigned, unsigned>
-resolveToLineCol(unsigned Offset, StringRef Filename) {
-  return resolveToLineCol(Offset, getBufferForFilename(Filename));
+resolveToLineCol(unsigned Offset, StringRef Filename,
+                 const llvm::StringMap<std::string> &VFSFiles) {
+  return resolveToLineCol(Offset, getBufferForFilename(Filename, VFSFiles));
 }
 
 static std::pair<unsigned, unsigned>
@@ -2095,9 +2170,11 @@ resolveToLineColFromBuf(unsigned Offset, const char *Ptr) {
   return { Line, Col };
 }
 
-static unsigned resolveFromLineCol(unsigned Line, unsigned Col,
-                                   StringRef Filename) {
-  return resolveFromLineCol(Line, Col, getBufferForFilename(Filename));
+static unsigned
+resolveFromLineCol(unsigned Line, unsigned Col, StringRef Filename,
+                   const llvm::StringMap<std::string> &VFSFiles) {
+  return resolveFromLineCol(Line, Col,
+                            getBufferForFilename(Filename, VFSFiles));
 }
 
 static unsigned resolveFromLineCol(unsigned Line, unsigned Col,
@@ -2136,18 +2213,23 @@ static unsigned resolveFromLineCol(unsigned Line, unsigned Col,
 
 static llvm::StringMap<llvm::MemoryBuffer*> Buffers;
 
-static llvm::MemoryBuffer *getBufferForFilename(StringRef Filename) {
-  auto It = Buffers.find(Filename);
+static llvm::MemoryBuffer *
+getBufferForFilename(StringRef Filename,
+                     const llvm::StringMap<std::string> &VFSFiles) {
+  auto VFSFileIt = VFSFiles.find(Filename);
+  auto MappedFilename =
+      VFSFileIt == VFSFiles.end() ? Filename : StringRef(VFSFileIt->second);
+
+  auto It = Buffers.find(MappedFilename);
   if (It != Buffers.end())
     return It->second;
 
-  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> FileBufOrErr =
-    llvm::MemoryBuffer::getFile(Filename);
+  auto FileBufOrErr = llvm::MemoryBuffer::getFile(MappedFilename);
   if (!FileBufOrErr) {
-    llvm::errs() << "error opening input file '" << Filename << "' ("
+    llvm::errs() << "error opening input file '" << MappedFilename << "' ("
                  << FileBufOrErr.getError().message() << ")\n";
     exit(1);
   }
 
-  return Buffers[Filename] = FileBufOrErr.get().release();
+  return Buffers[MappedFilename] = FileBufOrErr.get().release();
 }

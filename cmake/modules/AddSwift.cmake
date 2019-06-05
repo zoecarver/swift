@@ -650,6 +650,9 @@ endfunction()
 #     [SWIFT_COMPILE_FLAGS flag1...]
 #     [LINK_FLAGS flag1...]
 #     [FILE_DEPENDS target1 ...]
+# SWIFT_ENABLE_TENSORFLOW
+#     [EXTRA_RPATHS rpath1 ...]
+# END SWIFT_ENABLE_TENSORFLOW
 #     [DONT_EMBED_BITCODE]
 #     [IS_STDLIB]
 #     [FORCE_BUILD_OPTIMIZED]
@@ -706,6 +709,11 @@ endfunction()
 # FILE_DEPENDS
 #   Additional files this library depends on.
 #
+# SWIFT_ENABLE_TENSORFLOW
+# EXTRA_RPATHS
+#   List of directories to add to this library's RPATH.
+# END SWIFT_ENABLE_TENSORFLOW
+#
 # DONT_EMBED_BITCODE
 #   Don't embed LLVM bitcode in this target, even if it is enabled globally.
 #
@@ -750,6 +758,9 @@ function(_add_swift_library_single target name)
         C_COMPILE_FLAGS
         DEPENDS
         FILE_DEPENDS
+        # SWIFT_ENABLE_TENSORFLOW
+        EXTRA_RPATHS
+        # END SWIFT_ENABLE_TENSORFLOW
         FRAMEWORK_DEPENDS
         FRAMEWORK_DEPENDS_WEAK
         GYB_SOURCES
@@ -1068,6 +1079,28 @@ function(_add_swift_library_single target name)
       PROPERTIES
       INSTALL_RPATH "$ORIGIN:/usr/lib/swift/cygwin")
   endif()
+
+  # SWIFT_ENABLE_TENSORFLOW
+  # Hande extra RPATHs.
+  set(local_rpath "")
+  if("${SWIFTLIB_SINGLE_SDK}" STREQUAL "LINUX" AND NOT "${SWIFTLIB_SINGLE_SDK}" STREQUAL "ANDROID")
+    set(local_rpath "$ORIGIN:/usr/lib/swift/linux")
+  elseif("${SWIFTLIB_SINGLE_SDK}" STREQUAL "CYGWIN")
+    set(local_rpath "$ORIGIN:/usr/lib/swift/cygwin")
+  endif()
+  foreach(rpath_element ${SWIFTLIB_SINGLE_EXTRA_RPATHS})
+    if("${local_rpath}" STREQUAL "")
+      set(local_rpath "${rpath_element}")
+    else()
+      set(local_rpath "${local_rpath}:${rpath_element}")
+    endif()
+  endforeach()
+  if(NOT "${local_rpath}" STREQUAL "")
+    set_target_properties("${target}"
+      PROPERTIES
+      INSTALL_RPATH "${local_rpath}")
+  endif()
+  # END SWIFT_ENABLE_TENSORFLOW
 
   set_target_properties("${target}" PROPERTIES BUILD_WITH_INSTALL_RPATH YES)
   set_target_properties("${target}" PROPERTIES FOLDER "Swift libraries")
@@ -2200,6 +2233,18 @@ function(_add_swift_executable_single name)
         "-Xlinker" "@executable_path/../lib/swift/${SWIFT_SDK_${SWIFTEXE_SINGLE_SDK}_LIB_SUBDIR}")
   endif()
 
+  # SWIFT_ENABLE_TENSORFLOW
+  set(swift_relative_library_path "../lib/swift/${SWIFT_SDK_${SWIFTEXE_SINGLE_SDK}_LIB_SUBDIR}")
+  is_darwin_based_sdk("${SWIFTEXE_SINGLE_SDK}" IS_DARWIN)
+  # NOTE: Adding "${SWIFTLIB_DIR}/.." to the rpath was necessary to fix linker
+  # errors for Syntax/Parser tests on Linux.
+  if("${SWIFTEXE_SINGLE_SDK}" STREQUAL "LINUX" AND NOT "${SWIFTEXE_SINGLE_SDK}" STREQUAL "ANDROID")
+    set(local_rpath "$ORIGIN:$ORIGIN/${swift_relative_library_path}:${SWIFTLIB_DIR}/..:/usr/lib/swift/linux")
+  elseif("${SWIFTEXE_SINGLE_SDK}" STREQUAL "CYGWIN")
+    set(local_rpath "$ORIGIN:$ORIGIN/${swift_relative_library_path}:${SWIFTLIB_DIR}/..:/usr/lib/swift/cygwin")
+  endif()
+  # END SWIFT_ENABLE_TENSORFLOW
+
   _list_add_string_suffix(
       "${SWIFTEXE_SINGLE_LINK_LIBRARIES}"
       "-${SWIFT_SDK_${SWIFTEXE_SINGLE_SDK}_LIB_SUBDIR}-${SWIFTEXE_SINGLE_ARCHITECTURE}"
@@ -2256,6 +2301,13 @@ function(_add_swift_executable_single name)
   swift_common_llvm_config("${name}" ${SWIFTEXE_SINGLE_LLVM_LINK_COMPONENTS})
 
   set_target_properties(${name} PROPERTIES FOLDER "Swift executables")
+
+  # SWIFT_ENABLE_TENSORFLOW
+  if(NOT "${local_rpath}" STREQUAL "")
+    set_target_properties("${name}" PROPERTIES INSTALL_RPATH "${local_rpath}")
+  endif()
+  set_target_properties("${name}" PROPERTIES BUILD_WITH_INSTALL_RPATH YES)
+  # END SWIFT_ENABLE_TENSORFLOW
 endfunction()
 
 macro(add_swift_tool_subdirectory name)

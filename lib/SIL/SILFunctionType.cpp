@@ -97,6 +97,197 @@ CanType SILFunctionType::getSelfInstanceType() const {
   return selfTy;
 }
 
+// SWIFT_ENABLE_TENSORFLOW
+AutoDiffIndexSubset *
+SILFunctionType::getDifferentiationParameterIndices() {
+  assert(isDifferentiable());
+  SmallVector<unsigned, 8> result;
+  for (auto valueAndIndex : enumerate(getParameters()))
+    if (valueAndIndex.value().getDifferentiability() !=
+            SILParameterDifferentiability::NotDifferentiable)
+      result.push_back(valueAndIndex.index());
+  return AutoDiffIndexSubset::get(getASTContext(), getNumParameters(), result);
+}
+
+CanSILFunctionType SILFunctionType::getWithDifferentiability(
+    unsigned differentiationOrder, AutoDiffIndexSubset *parameterIndices) {
+  // FIXME(rxwei): Handle differentiation order.
+
+  SmallVector<SILParameterInfo, 8> newParameters;
+  for (auto paramAndIndex : enumerate(getParameters())) {
+    auto &param = paramAndIndex.value();
+    unsigned index = paramAndIndex.index();
+    newParameters.push_back(param.getWithDifferentiability(
+        index < parameterIndices->getCapacity() &&
+            parameterIndices->contains(index)
+                ? SILParameterDifferentiability::DifferentiableOrNotApplicable
+                : SILParameterDifferentiability::NotDifferentiable));
+  }
+
+  auto newExtInfo = getExtInfo().withDifferentiable();
+
+  return get(getGenericSignature(), newExtInfo, getCoroutineKind(),
+             getCalleeConvention(), newParameters, getYields(), getResults(),
+             getOptionalErrorResult(), getASTContext(),
+             getWitnessMethodConformanceOrNone());
+}
+
+CanSILFunctionType SILFunctionType::getWithoutDifferentiability() {
+  if (!isDifferentiable())
+    return CanSILFunctionType(this);
+  auto nondiffExtInfo = getExtInfo().withDifferentiable(false);
+  SmallVector<SILParameterInfo, 8> newParams;
+  for (auto &param : getParameters())
+    newParams.push_back(param.getWithDifferentiability(
+        SILParameterDifferentiability::DifferentiableOrNotApplicable));
+  return SILFunctionType::get(getGenericSignature(), nondiffExtInfo,
+                              getCoroutineKind(), getCalleeConvention(),
+                              newParams, getYields(), getResults(),
+                              getOptionalErrorResult(), getASTContext());
+}
+
+CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
+    AutoDiffIndexSubset *parameterIndices, unsigned resultIndex,
+    unsigned differentiationOrder, AutoDiffAssociatedFunctionKind kind,
+    SILModule &module, LookupConformanceFn lookupConformance,
+    CanGenericSignature whereClauseGenSig) {
+  // JVP: (T...) -> ((R...),
+  //                 (T.TangentVector...) -> (R.TangentVector...))
+  // VJP: (T...) -> ((R...),
+  //                 (R.TangentVector...) -> (T.TangentVector...))
+
+  auto &ctx = getASTContext();
+  auto &typeConverter = module.Types;
+  if (!whereClauseGenSig)
+    whereClauseGenSig = getGenericSignature();
+  Lowering::GenericContextScope genericContextScope(
+      module.Types, whereClauseGenSig);
+
+  // Given a type, returns its formal SIL parameter info.
+  auto getTangentParameterInfoForOriginalResult = [&](
+      CanType tanType, ResultConvention origResConv) -> SILParameterInfo {
+    auto &tl = typeConverter.getTypeLowering(tanType,
+                                             ResilienceExpansion::Minimal);
+    ParameterConvention conv;
+    switch (origResConv) {
+    case ResultConvention::Owned:
+    case ResultConvention::Autoreleased:
+      conv = tl.isTrivial()
+          ? ParameterConvention::Direct_Unowned
+          : ParameterConvention::Direct_Guaranteed;
+      break;
+    case ResultConvention::Unowned:
+    case ResultConvention::UnownedInnerPointer:
+      conv = ParameterConvention::Direct_Unowned;
+      break;
+    case ResultConvention::Indirect:
+      conv = ParameterConvention::Indirect_In_Guaranteed;
+      break;
+    }
+    return {tanType, conv};
+  };
+
+  // Given a type, returns its formal SIL result info.
+  auto getTangentResultInfoForOriginalParameter = [&](
+      CanType tanType, ParameterConvention origParamConv) -> SILResultInfo {
+    auto &tl = typeConverter.getTypeLowering(tanType,
+                                             ResilienceExpansion::Minimal);
+    ResultConvention conv;
+    switch (origParamConv) {
+    case ParameterConvention::Direct_Owned:
+    case ParameterConvention::Direct_Guaranteed:
+    case ParameterConvention::Direct_Unowned:
+      conv = tl.isTrivial()
+          ? ResultConvention::Unowned
+          : ResultConvention::Owned;
+      break;
+    case ParameterConvention::Indirect_In:
+    case ParameterConvention::Indirect_Inout:
+    case ParameterConvention::Indirect_In_Constant:
+    case ParameterConvention::Indirect_In_Guaranteed:
+    case ParameterConvention::Indirect_InoutAliasable:
+      conv = ResultConvention::Indirect;
+      break;
+    }
+    return {tanType, conv};
+  };
+
+  // Helper function testing if we are differentiating wrt this index.
+  auto isWrtIndex = [&](unsigned index) -> bool {
+    return index < parameterIndices->getCapacity() &&
+        parameterIndices->contains(index);
+  };
+
+  // Calculate differentiation parameter infos.
+  SmallVector<SILParameterInfo, 4> wrtParams;
+  for (auto valueAndIndex : enumerate(getParameters()))
+    if (isWrtIndex(valueAndIndex.index()))
+      wrtParams.push_back(valueAndIndex.value());
+
+  CanSILFunctionType closureType;
+  switch (kind) {
+  case AutoDiffAssociatedFunctionKind::JVP: {
+    SmallVector<SILParameterInfo, 8> differentialParams;
+    for (auto &param : wrtParams) {
+      differentialParams.push_back(
+          {param.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance)
+              ->getCanonicalType(),
+           param.getConvention()});
+    }
+    SmallVector<SILResultInfo, 8> differentialResults;
+    auto &result = getResults()[resultIndex];
+    differentialResults.push_back(
+        {result.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance)
+            ->getCanonicalType(),
+         result.getConvention()});
+    closureType = SILFunctionType::get(
+        /*genericSignature*/ nullptr, ExtInfo(), SILCoroutineKind::None,
+        ParameterConvention::Direct_Guaranteed, differentialParams, {},
+        differentialResults, None, ctx);
+    break;
+  }
+  case AutoDiffAssociatedFunctionKind::VJP: {
+    SmallVector<SILParameterInfo, 8> pullbackParams;
+    auto &origRes = getResults()[resultIndex];
+    auto tangentAssocTy =
+        origRes.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance)
+            ->getCanonicalType();
+    pullbackParams.push_back(
+        getTangentParameterInfoForOriginalResult(tangentAssocTy,
+                                                 origRes.getConvention()));
+    SmallVector<SILResultInfo, 8> pullbackResults;
+    for (auto &param : wrtParams) {
+      auto paramTangentTy =
+          param.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance)
+              ->getCanonicalType();
+      pullbackResults.push_back(
+          getTangentResultInfoForOriginalParameter(paramTangentTy,
+                                                   param.getConvention()));
+    }
+    closureType = SILFunctionType::get(
+        /*genericSignature*/ nullptr, ExtInfo(), SILCoroutineKind::None,
+        ParameterConvention::Direct_Guaranteed, pullbackParams, {},
+        pullbackResults, {}, ctx);
+    break;
+  }
+  }
+
+  SmallVector<SILResultInfo, 4> newResults;
+  newResults.reserve(getNumResults() + 1);
+  for (auto &result : getResults()) {
+    auto mappedResult = result.getWithType(
+        result.getType()->getCanonicalType(whereClauseGenSig));
+    newResults.push_back(mappedResult);
+  }
+  newResults.push_back({closureType->getCanonicalType(whereClauseGenSig),
+                        ResultConvention::Owned});
+  return SILFunctionType::get(whereClauseGenSig, getExtInfo(),
+                              getCoroutineKind(), getCalleeConvention(),
+                              getParameters(), getYields(), newResults,
+                              getOptionalErrorResult(), ctx,
+                              getWitnessMethodConformanceOrNone());
+}
+
 ClassDecl *
 SILFunctionType::getWitnessMethodClass() const {
   auto selfTy = getSelfInstanceType();
@@ -534,7 +725,8 @@ private:
       auto flags = params[i].getParameterFlags();
 
       visit(flags.getValueOwnership(), /*forSelf=*/false,
-            eltPattern, ty, silRepresentation);
+            // SWIFT_ENABLE_TENSORFLOW
+            eltPattern, ty, silRepresentation, flags.isNonDifferentiable());
     }
 
     // Process the self parameter.  Note that we implicitly drop self
@@ -555,7 +747,9 @@ private:
 
   void visit(ValueOwnership ownership, bool forSelf,
              AbstractionPattern origType, CanType substType,
-             SILFunctionTypeRepresentation rep) {
+             // SWIFT_ENABLE_TENSORFLOW
+             SILFunctionTypeRepresentation rep,
+             bool isNonDifferentiable = false) {
     assert(!isa<InOutType>(substType));
 
     // Tuples get handled specially, in some cases:
@@ -605,7 +799,12 @@ private:
     }
     auto loweredType = substTL.getLoweredType().getASTType();
 
-    Inputs.push_back(SILParameterInfo(loweredType, convention));
+    // SWIFT_ENABLE_TENSORFLOW
+    SILParameterInfo param(loweredType, convention);
+    if (isNonDifferentiable)
+      param = param.getWithDifferentiability(
+          SILParameterDifferentiability::NotDifferentiable);
+    Inputs.push_back(param);
 
     maybeAddForeignParameters();
   }
@@ -1026,7 +1225,9 @@ static CanSILFunctionType getSILFunctionType(
   auto silExtInfo = SILFunctionType::ExtInfo()
     .withRepresentation(extInfo.getSILRepresentation())
     .withIsPseudogeneric(pseudogeneric)
-    .withNoEscape(extInfo.isNoEscape());
+    // SWIFT_ENABLE_TENSORFLOW
+    .withNoEscape(extInfo.isNoEscape())
+    .withDifferentiable(extInfo.isDifferentiable());
   
   return SILFunctionType::get(genericSig, silExtInfo, coroutineKind,
                               calleeConvention, inputs, yields,
@@ -2071,6 +2272,29 @@ const SILConstantInfo &TypeConverter::getConstantInfo(SILDeclRef constant) {
     ::getUncachedSILFunctionTypeForConstant(M, constant,
                                             loweredInterfaceType);
 
+  // SWIFT_ENABLE_TENSORFLOW
+  // In the case of autodiff associated functions, the above computations
+  // determine `silFnType` by first computing the associated function type at
+  // the AST level and then lowering that. Unfortunately, the actual
+  // SILFunctionType for the function is determined by first lowering the
+  // function's AST type, and then computing the associated function type at the
+  // SIL level. "Lowering" does not commute with "getting the autodiff
+  // associated type", so these two computations produce different results.
+  // Therefore `silFnType` is not the actual type of the function that
+  // `constant` refers to.
+  //
+  // We hackily fix this problem by redoing the computation in the right order.
+  if (auto *autoDiffFuncId = constant.autoDiffAssociatedFunctionIdentifier) {
+    auto origFnConstantInfo =
+        getConstantInfo(constant.asAutoDiffOriginalFunction());
+    auto loweredIndices = autoDiffFuncId->getParameterIndices()
+        ->getLowered(Context, formalInterfaceType);
+    silFnType = origFnConstantInfo.SILFnType->getAutoDiffAssociatedFunctionType(
+        loweredIndices, /*resultIndex*/ 0,
+        autoDiffFuncId->getDifferentiationOrder(), autoDiffFuncId->getKind(), M,
+        LookUpConformanceInModule(M.getSwiftModule()));
+  }
+
   LLVM_DEBUG(llvm::dbgs() << "lowering type for constant ";
              constant.print(llvm::dbgs());
              llvm::dbgs() << "\n  formal type: ";
@@ -2389,7 +2613,9 @@ public:
   }
 
   SILParameterInfo subst(SILParameterInfo orig) {
-    return SILParameterInfo(visit(orig.getType()), orig.getConvention());
+    // SWIFT_ENABLE_TENSORFLOW
+    return SILParameterInfo(visit(orig.getType()), orig.getConvention(),
+                            orig.getDifferentiability());
   }
 
   /// Tuples need to have their component types substituted by these

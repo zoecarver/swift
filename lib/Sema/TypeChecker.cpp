@@ -397,6 +397,14 @@ static void typeCheckFunctionsAndExternalDecls(SourceFile &SF, TypeChecker &TC) 
     TC.checkFunctionErrorHandling(FD);
   }
 
+  // SWIFT_ENABLE_TENSORFLOW
+  // Check @compilerEvaluable function body correctness for all the functions
+  // defined in this file. We do this here, rather than in
+  // AttributeChecker::visitCompilerEvaluableAttr() because we need the function
+  // bodies to be type checked.
+  for (AbstractFunctionDecl *AFD : TC.definedFunctions) {
+    TC.checkFunctionBodyCompilerEvaluable(AFD);
+  }
   TC.definedFunctions.clear();
 }
 

@@ -903,6 +903,10 @@ void Serializer::writeBlockInfoBlock() {
   BLOCK_RECORD(sil_block, SIL_SPECIALIZE_ATTR);
   BLOCK_RECORD(sil_block, SIL_ONE_OPERAND_EXTRA_ATTR);
   BLOCK_RECORD(sil_block, SIL_TWO_OPERANDS_EXTRA_ATTR);
+  // SWIFT_ENABLE_TENSORFLOW
+  BLOCK_RECORD(sil_block, SIL_DIFFERENTIABLE_ATTR);
+  BLOCK_RECORD(sil_block, SIL_INST_AUTODIFF_FUNCTION);
+  BLOCK_RECORD(sil_block, SIL_INST_AUTODIFF_FUNCTION_EXTRACT);
 
   // These layouts can exist in both decl blocks and sil blocks.
 #define BLOCK_RECORD_WITH_NAMESPACE(K, X) emitRecordID(X, #X, nameBuffer)
@@ -2328,6 +2332,9 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
     case DAK_ClangImporterSynthesizedType:
     case DAK_PrivateImport:
       llvm_unreachable("cannot serialize attribute");
+    // SWIFT_ENABLE_TENSORFLOW
+    case DAK_Differentiating:
+      llvm_unreachable("cannot serialize attribute");
 
     case DAK_Count:
       llvm_unreachable("not a real attribute");
@@ -2508,6 +2515,38 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
       CustomDeclAttrLayout::emitRecord(
         S.Out, S.ScratchRecord, abbrCode, theAttr->isImplicit(),
         S.addTypeRef(theAttr->getTypeLoc().getType()));
+      return;
+    }
+
+    // SWIFT_ENABLE_TENSORFLOW
+    case DAK_Differentiable: {
+      auto abbrCode = S.DeclTypeAbbrCodes[DifferentiableDeclAttrLayout::Code];
+      auto attr = cast<DifferentiableAttr>(DA);
+
+      IdentifierID jvpName = 0;
+      DeclID jvpRef = 0;
+      if (auto jvp = attr->getJVP()) {
+        jvpName = S.addDeclBaseNameRef(jvp->Name.getBaseName());
+        jvpRef = S.addDeclRef(attr->getJVPFunction());
+      }
+      IdentifierID vjpName = 0;
+      DeclID vjpRef = 0;
+      if (auto vjp = attr->getVJP()) {
+        vjpName = S.addDeclBaseNameRef(vjp->Name.getBaseName());
+        vjpRef = S.addDeclRef(attr->getVJPFunction());
+      }
+
+      auto paramIndices = attr->getParameterIndices();
+      assert(paramIndices && "Checked parameter indices must be resolved");
+      SmallVector<bool, 4> indices;
+      for (unsigned i : swift::indices(paramIndices->parameters))
+        indices.push_back(paramIndices->parameters[i]);
+
+      DifferentiableDeclAttrLayout::emitRecord(
+          S.Out, S.ScratchRecord, abbrCode, attr->isImplicit(),
+          jvpName, jvpRef, vjpName, vjpRef, indices);
+
+      S.writeGenericRequirements(attr->getRequirements(), S.DeclTypeAbbrCodes);
       return;
     }
     }
@@ -3833,6 +3872,17 @@ static uint8_t getRawStableParameterConvention(swift::ParameterConvention pc) {
   llvm_unreachable("bad parameter convention kind");
 }
 
+/// Translate from AST SILParameterDifferentiability enum to the Serialization
+/// enum values, which are guaranteed to be stable.
+static uint8_t
+getRawSILParameterDifferentiability(swift::SILParameterDifferentiability pd) {
+  switch (pd) {
+  SIMPLE_CASE(SILParameterDifferentiability, DifferentiableOrNotApplicable)
+  SIMPLE_CASE(SILParameterDifferentiability, NotDifferentiable)
+  }
+  llvm_unreachable("bad parameter differentiability kind");
+}
+
 /// Translate from the AST ResultConvention enum to the
 /// Serialization enum values, which are guaranteed to be stable.
 static uint8_t getRawStableResultConvention(swift::ResultConvention rc) {
@@ -4080,7 +4130,9 @@ public:
           S.Out, S.ScratchRecord, abbrCode,
           S.addDeclBaseNameRef(param.getLabel()),
           S.addTypeRef(param.getPlainType()), paramFlags.isVariadic(),
-          paramFlags.isAutoClosure(), rawOwnership);
+          // SWIFT_ENABLE_TENSORFLOW
+          paramFlags.isAutoClosure(), rawOwnership,
+          paramFlags.isNonDifferentiable());
     }
   }
 
@@ -4092,7 +4144,8 @@ public:
         S.addTypeRef(fnTy->getResult()),
         getRawStableFunctionTypeRepresentation(fnTy->getRepresentation()),
         fnTy->isNoEscape(),
-        fnTy->throws());
+        // SWIFT_ENABLE_TENSORFLOW
+        fnTy->throws(), fnTy->isDifferentiable());
 
     serializeFunctionTypeParams(fnTy);
   }
@@ -4106,7 +4159,8 @@ public:
     GenericFunctionTypeLayout::emitRecord(S.Out, S.ScratchRecord, abbrCode,
         S.addTypeRef(fnTy->getResult()),
         getRawStableFunctionTypeRepresentation(fnTy->getRepresentation()),
-        fnTy->throws(),
+        // SWIFT_ENABLE_TENSORFLOW
+        fnTy->throws(), fnTy->isDifferentiable(),
         S.addGenericSignatureRef(genericSig));
 
     serializeFunctionTypeParams(fnTy);
@@ -4140,6 +4194,10 @@ public:
       variableData.push_back(S.addTypeRef(param.getType()));
       unsigned conv = getRawStableParameterConvention(param.getConvention());
       variableData.push_back(TypeID(conv));
+      // SWIFT_ENABLE_TENSORFLOW
+      if (fnTy->isDifferentiable())
+        variableData.push_back(TypeID(
+            getRawSILParameterDifferentiability(param.getDifferentiability())));
     }
     for (auto yield : fnTy->getYields()) {
       variableData.push_back(S.addTypeRef(yield.getType()));
@@ -4171,9 +4229,10 @@ public:
         S.Out, S.ScratchRecord, abbrCode,
         stableCoroutineKind, stableCalleeConvention,
         stableRepresentation, fnTy->isPseudogeneric(), fnTy->isNoEscape(),
-        fnTy->hasErrorResult(), fnTy->getParameters().size(),
-        fnTy->getNumYields(), fnTy->getNumResults(),
-        S.addGenericSignatureRef(sig), variableData);
+        // SWIFT_ENABLE_TENSORFLOW
+        fnTy->isDifferentiable(), fnTy->hasErrorResult(),
+        fnTy->getParameters().size(), fnTy->getNumYields(),
+        fnTy->getNumResults(), S.addGenericSignatureRef(sig), variableData);
 
     if (auto conformance = fnTy->getWitnessMethodConformanceOrNone())
       S.writeConformance(*conformance, S.DeclTypeAbbrCodes);

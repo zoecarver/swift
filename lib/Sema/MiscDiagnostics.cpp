@@ -210,7 +210,7 @@ static void diagSyntacticUseRestrictions(TypeChecker &TC, const Expr *E,
           }
         });
       }
-      
+
       // If we have an assignment expression, scout ahead for acceptable _'s.
       if (auto *AE = dyn_cast<AssignExpr>(E))
         markAcceptableDiscardExprs(AE->getDest());

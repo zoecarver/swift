@@ -470,6 +470,7 @@ static bool ParseLangArgs(LangOptions &Opts, ArgList &Args,
     TargetArg = A->getValue();
   }
 
+  Opts.EnableCXXInterop |= Args.hasArg(OPT_enable_cxx_interop);
   Opts.EnableObjCInterop =
       Args.hasFlag(OPT_enable_objc_interop, OPT_disable_objc_interop,
                    Target.isOSDarwin());
@@ -737,7 +738,10 @@ static bool ParseSILArgs(SILOptions &Opts, ArgList &Args,
       Opts.AssertConfig = SILOptions::Unchecked;
     } else if (A->getOption().matches(OPT_Oplayground)) {
       // For now -Oplayground is equivalent to -Onone.
-      Opts.OptMode = OptimizationMode::NoOptimization;
+      // SWIFT_ENABLE_TENSORFLOW
+      // FIXME(rxwei): Change back to NoOptimization when deabstraction runs
+      // optimizations before partitioning.
+      Opts.OptMode = OptimizationMode::ForSpeed;
     } else if (A->getOption().matches(OPT_Osize)) {
       Opts.OptMode = OptimizationMode::ForSize;
     } else {

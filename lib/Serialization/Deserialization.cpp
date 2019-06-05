@@ -4124,6 +4124,50 @@ llvm::Error DeclDeserializer::deserializeDeclAttributes() {
         break;
       }
 
+      // SWIFT_ENABLE_TENSORFLOW
+      case decls_block::Differentiable_DECL_ATTR: {
+        bool isImplicit;
+        uint64_t jvpNameId;
+        DeclID jvpDeclId;
+        uint64_t vjpNameId;
+        DeclID vjpDeclId;
+        ArrayRef<uint64_t> parameters;
+        SmallVector<Requirement, 4> requirements;
+
+        serialization::decls_block::DifferentiableDeclAttrLayout::readRecord(
+            scratch, isImplicit, jvpNameId, jvpDeclId, vjpNameId, vjpDeclId,
+            parameters);
+
+        Optional<DeclNameWithLoc> jvp;
+        FuncDecl *jvpDecl = nullptr;
+        if (jvpNameId != 0 && jvpDeclId != 0) {
+          jvp = { MF.getIdentifier(jvpNameId), DeclNameLoc() };
+          jvpDecl = cast<FuncDecl>(MF.getDecl(jvpDeclId));
+        }
+        Optional<DeclNameWithLoc> vjp;
+        FuncDecl *vjpDecl = nullptr;
+        if (vjpNameId != 0 && vjpDeclId != 0) {
+          vjp = { MF.getIdentifier(vjpNameId), DeclNameLoc() };
+          vjpDecl = cast<FuncDecl>(MF.getDecl(vjpDeclId));
+        }
+
+        llvm::SmallBitVector parametersBitVector(parameters.size());
+        for (unsigned i : indices(parameters))
+          parametersBitVector[i] = parameters[i];
+        auto *indices = AutoDiffParameterIndices::get(parametersBitVector, ctx);
+
+        MF.readGenericRequirements(requirements, MF.DeclTypeCursor);
+
+        auto diffAttr =
+            DifferentiableAttr::create(ctx, isImplicit, SourceLoc(),
+                                       SourceRange(), indices, jvp, vjp,
+                                       requirements);
+        diffAttr->setJVPFunction(jvpDecl);
+        diffAttr->setVJPFunction(vjpDecl);
+        Attr = diffAttr;
+        break;
+      }
+
       case decls_block::DynamicReplacement_DECL_ATTR: {
         bool isImplicit;
         uint64_t numArgs;
@@ -4406,6 +4450,21 @@ Optional<swift::ParameterConvention> getActualParameterConvention(uint8_t raw) {
   return None;
 }
 
+/// Translate from the serialization SILParameterDifferentiability enumerators,
+/// which are guaranteed to be stable, to the AST ones.
+static Optional<swift::SILParameterDifferentiability>
+getActualSILParameterDifferentiability(uint8_t raw) {
+  switch (serialization::SILParameterDifferentiability(raw)) {
+#define CASE(ID)                                                               \
+  case serialization::SILParameterDifferentiability::ID:                       \
+    return swift::SILParameterDifferentiability::ID;
+  CASE(DifferentiableOrNotApplicable)
+  CASE(NotDifferentiable)
+  }
+  return None;
+#undef CASE
+}
+
 /// Translate from the serialization ResultConvention enumerators,
 /// which are guaranteed to be stable, to the AST ones.
 static
@@ -4642,20 +4701,26 @@ public:
                                             bool isGeneric) {
     TypeID resultID;
     uint8_t rawRepresentation;
-    bool noescape = false, throws;
+
+    // SWIFT_ENABLE_TENSORFLOW
+    bool noescape = false, throws = false, differentiable = false;
     GenericSignature *genericSig = nullptr;
 
     if (!isGeneric) {
       decls_block::FunctionTypeLayout::readRecord(scratch, resultID,
                                                   rawRepresentation,
                                                   noescape,
-                                                  throws);
+                                                  // SWIFT_ENABLE_TENSORFLOW
+                                                  throws,
+                                                  differentiable);
     } else {
       GenericSignatureID rawGenericSig;
       decls_block::GenericFunctionTypeLayout::readRecord(scratch,
                                                          resultID,
                                                          rawRepresentation,
                                                          throws,
+                                                         // SWIFT_ENABLE_TENSORFLOW
+                                                         differentiable,
                                                          rawGenericSig);
       genericSig = MF.getGenericSignature(rawGenericSig);
     }
@@ -4666,7 +4731,9 @@ public:
       return nullptr;
     }
 
-    auto info = FunctionType::ExtInfo(*representation, noescape, throws);
+    auto info = FunctionType::ExtInfo(*representation, noescape,
+                                      // SWIFT_ENABLE_TENSORFLOW
+                                      throws, differentiable);
 
     auto resultTy = MF.getTypeChecked(resultID);
     if (!resultTy)
@@ -4686,11 +4753,11 @@ public:
 
       IdentifierID labelID;
       TypeID typeID;
-      bool isVariadic, isAutoClosure;
+      bool isVariadic, isAutoClosure, isNonDifferentiable;
       unsigned rawOwnership;
       decls_block::FunctionParamLayout::readRecord(scratch, labelID, typeID,
                                                    isVariadic, isAutoClosure,
-                                                   rawOwnership);
+                                                   rawOwnership, isNonDifferentiable);
 
       auto ownership =
           getActualValueOwnership((serialization::ValueOwnership)rawOwnership);
@@ -4706,7 +4773,7 @@ public:
       params.emplace_back(paramTy.get(),
                           MF.getIdentifier(labelID),
                           ParameterTypeFlags(isVariadic, isAutoClosure,
-                                             *ownership));
+                                             *ownership, isNonDifferentiable));
     }
 
     if (!isGeneric) {
@@ -5012,6 +5079,8 @@ public:
     uint8_t rawRepresentation;
     bool pseudogeneric = false;
     bool noescape;
+    // SWIFT_ENABLE_TENSORFLOW
+    bool differentiable;
     bool hasErrorResult;
     unsigned numParams;
     unsigned numYields;
@@ -5025,6 +5094,8 @@ public:
                                              rawRepresentation,
                                              pseudogeneric,
                                              noescape,
+                                             // SWIFT_ENABLE_TENSORFLOW
+                                             differentiable,
                                              hasErrorResult,
                                              numParams,
                                              numYields,
@@ -5039,7 +5110,9 @@ public:
       MF.error();
       return nullptr;
     }
-    SILFunctionType::ExtInfo extInfo(*representation, pseudogeneric, noescape);
+    // SWIFT_ENABLE_TENSORFLOW
+    SILFunctionType::ExtInfo extInfo(*representation, pseudogeneric, noescape,
+                                     differentiable);
 
     // Process the coroutine kind.
     auto coroutineKind = getActualSILCoroutineKind(rawCoroutineKind);
@@ -5055,8 +5128,10 @@ public:
       return nullptr;
     }
 
-    auto processParameter = [&](TypeID typeID, uint64_t rawConvention)
-                                  -> llvm::Expected<SILParameterInfo> {
+    // SWIFT_ENABLE_TENSORFLOW
+    auto processParameter =
+        [&](TypeID typeID, uint64_t rawConvention,
+            uint64_t rawParamDiff) -> llvm::Expected<SILParameterInfo> {
       auto convention = getActualParameterConvention(rawConvention);
       if (!convention) {
         MF.error();
@@ -5065,7 +5140,20 @@ public:
       auto type = MF.getTypeChecked(typeID);
       if (!type)
         return type.takeError();
-      return SILParameterInfo(type.get()->getCanonicalType(), *convention);
+      // SWIFT_ENABLE_TENSORFLOW
+      auto paramDiff =
+          swift::SILParameterDifferentiability::DifferentiableOrNotApplicable;
+      if (differentiable) {
+        auto paramDiffOpt =
+            getActualSILParameterDifferentiability(rawParamDiff);
+        if (!paramDiffOpt) {
+          MF.error();
+          llvm_unreachable("an error is a fatal exit at this point");
+        }
+        paramDiff = *paramDiffOpt;
+      }
+      return SILParameterInfo(type.get()->getCanonicalType(), *convention,
+                              paramDiff);
     };
 
     auto processYield = [&](TypeID typeID, uint64_t rawConvention)
@@ -5095,8 +5183,11 @@ public:
     };
 
     // Bounds check.  FIXME: overflow
-    if (2 * numParams + 2 * numResults + 2 * unsigned(hasErrorResult)
-          > variableData.size()) {
+    // SWIFT_ENABLE_TENSORFLOW
+    unsigned entriesPerParam = differentiable ? 3 : 2;
+    if (entriesPerParam * numParams + 2 * numResults +
+            2 * unsigned(hasErrorResult) >
+        variableData.size()) {
       MF.error();
       return nullptr;
     }
@@ -5109,7 +5200,11 @@ public:
     for (unsigned i = 0; i != numParams; ++i) {
       auto typeID = variableData[nextVariableDataIndex++];
       auto rawConvention = variableData[nextVariableDataIndex++];
-      auto param = processParameter(typeID, rawConvention);
+      // SWIFT_ENABLE_TENSORFLOW
+      uint64_t paramDiff = 0;
+      if (differentiable)
+        paramDiff = variableData[nextVariableDataIndex++];
+      auto param = processParameter(typeID, rawConvention, paramDiff);
       if (!param)
         return param.takeError();
       allParams.push_back(param.get());

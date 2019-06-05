@@ -518,7 +518,12 @@ getNormalInvocationArguments(std::vector<std::string> &invocationArgStrs,
       });
 
   } else {
-    invocationArgStrs.insert(invocationArgStrs.end(), {"-x", "c", "-std=gnu11"});
+    bool EnableCXXInterop = LangOpts.EnableCXXInterop;
+    invocationArgStrs.insert(invocationArgStrs.end(), {
+        "-x",
+        EnableCXXInterop ? "c++" : "c",
+        EnableCXXInterop ? "-std=c++17" : "-std=gnu11"
+    });
   }
 
   // Set C language options.
@@ -607,6 +612,20 @@ getNormalInvocationArguments(std::vector<std::string> &invocationArgStrs,
     } else {
       // FIXME: Emit a warning of some kind.
     }
+  }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  // Include platform-specific standard library modulemaps.
+  SmallString<128> platformSpecificModuleMapDir;
+  platformSpecificModuleMapDir = searchPathOpts.RuntimeResourcePath;
+  llvm::sys::path::append(
+    platformSpecificModuleMapDir,
+    swift::getPlatformNameForTriple(triple),
+    swift::getMajorArchitectureName(triple),
+    "modulemaps");
+  if (llvm::sys::fs::exists(platformSpecificModuleMapDir)) {
+    invocationArgStrs.push_back("-I");
+    invocationArgStrs.push_back(platformSpecificModuleMapDir.str());
   }
 
   if (searchPathOpts.SDKPath.empty()) {
@@ -1015,8 +1034,8 @@ ClangImporter::create(ASTContext &ctx,
     llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS;
     if (!ctx.SearchPathOpts.VFSOverlayFiles.empty()) {
       // If the clang instance has overlays it means the user has provided
-      // -ivfsoverlay options and swift -vfsoverlay options.  We're going to
-      // clobber their file system with our own, so warn about it.
+      // -ivfsoverlay options.  We're going to clobber their file system with
+      // the Swift file system, so warn about it.
       if (!instance.getHeaderSearchOpts().VFSOverlayFiles.empty()) {
         ctx.Diags.diagnose(SourceLoc(), diag::clang_vfs_overlay_is_ignored);
       }

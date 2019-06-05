@@ -5,6 +5,8 @@ silopt_register_sources(
   ClosureLifetimeFixup.cpp
   ConstantPropagation.cpp
   DefiniteInitialization.cpp
+  # SWIFT_ENABLE_TENSORFLOW
+  Differentiation.cpp
   DIMemoryUseCollector.cpp
   DataflowDiagnostics.cpp
   DiagnoseInfiniteRecursion.cpp

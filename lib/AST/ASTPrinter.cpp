@@ -2467,6 +2467,9 @@ static void printParameterFlags(ASTPrinter &printer, PrintOptions options,
                                 ParameterTypeFlags flags, bool escaping) {
   if (!options.excludeAttrKind(TAK_autoclosure) && flags.isAutoClosure())
     printer << "@autoclosure ";
+  // SWIFT_ENABLE_TENSORFLOW
+  if (!options.excludeAttrKind(TAK_nondiff) && flags.isNonDifferentiable())
+    printer << "@nondiff ";
 
   switch (flags.getValueOwnership()) {
   case ValueOwnership::Default:
@@ -3800,6 +3803,11 @@ public:
     if (Options.SkipAttributes)
       return;
 
+    // SWIFT_ENABLE_TENSORFLOW
+    if (!Options.excludeAttrKind(TAK_differentiable) && info.isDifferentiable()) {
+      // FIXME(rxwei): Print differentiation order.
+      Printer << "@differentiable ";
+    }
 
     if (Options.PrintFunctionRepresentationAttrs &&
         !Options.excludeAttrKind(TAK_convention) &&
@@ -3844,6 +3852,12 @@ public:
       Optional<ProtocolConformanceRef> witnessMethodConformance) {
     if (Options.SkipAttributes)
       return;
+
+    // SWIFT_ENABLE_TENSORFLOW
+    if (!Options.excludeAttrKind(TAK_differentiable) && info.isDifferentiable()) {
+      // FIXME(rxwei): Print differentiation order.
+      Printer << "@differentiable ";
+    }
 
     if (Options.PrintFunctionRepresentationAttrs &&
         !Options.excludeAttrKind(TAK_convention) &&
@@ -4487,6 +4501,14 @@ void SILParameterInfo::print(raw_ostream &OS, const PrintOptions &Opts) const {
 }
 void SILParameterInfo::print(ASTPrinter &Printer,
                              const PrintOptions &Opts) const {
+  /// SWIFT_ENABLE_TENSORFLOW
+  switch (getDifferentiability()) {
+    case SILParameterDifferentiability::NotDifferentiable:
+    Printer << "@nondiff ";
+    break;
+    default:
+    break;
+  }
   Printer << getStringForParameterConvention(getConvention());
   getType().print(Printer, Opts);
 }

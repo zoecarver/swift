@@ -21,6 +21,7 @@
 #include "SourceKit/Core/LangSupport.h"
 #include "SourceKit/Core/NotificationCenter.h"
 #include "SourceKit/Support/Concurrency.h"
+#include "SourceKit/Support/FileSystemProvider.h"
 #include "SourceKit/Support/Logging.h"
 #include "SourceKit/Support/Statistic.h"
 #include "SourceKit/Support/Tracing.h"
@@ -36,6 +37,7 @@
 #include "swift/Syntax/SyntaxNodes.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -44,6 +46,7 @@
 #include "llvm/Support/NativeFormatting.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include <mutex>
 
@@ -126,6 +129,14 @@ static SourceKit::Context &getGlobalContext() {
   return *GlobalCtx;
 }
 
+namespace SourceKit {
+void setGlobalFileSystemProvider(StringRef Name,
+                                 FileSystemProvider *FileSystemProvider) {
+  assert(FileSystemProvider);
+  getGlobalContext().setFileSystemProvider(Name, FileSystemProvider);
+}
+} // namespace SourceKit
+
 static sourcekitd_response_t demangleNames(ArrayRef<const char *> MangledNames,
                                            bool Simplified);
 
@@ -155,9 +166,10 @@ static void findRelatedIdents(StringRef Filename,
                               ArrayRef<const char *> Args,
                               ResponseReceiver Rec);
 
-static sourcekitd_response_t codeComplete(llvm::MemoryBuffer *InputBuf,
-                                          int64_t Offset,
-                                          ArrayRef<const char *> Args);
+static sourcekitd_response_t
+codeComplete(llvm::MemoryBuffer *InputBuf, int64_t Offset,
+             ArrayRef<const char *> Args,
+             llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem);
 
 static sourcekitd_response_t codeCompleteOpen(StringRef name,
                                               llvm::MemoryBuffer *InputBuf,
@@ -182,7 +194,8 @@ conformingMethodList(llvm::MemoryBuffer *InputBuf, int64_t Offset,
 
 static sourcekitd_response_t
 editorOpen(StringRef Name, llvm::MemoryBuffer *Buf,
-           SKEditorConsumerOptions Opts, ArrayRef<const char *> Args);
+           SKEditorConsumerOptions Opts, ArrayRef<const char *> Args,
+           llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem);
 
 static sourcekitd_response_t
 editorOpenInterface(StringRef Name, StringRef ModuleName,
@@ -314,10 +327,11 @@ void sourcekitd::handleRequest(sourcekitd_object_t Req,
   });
 }
 
-static std::unique_ptr<llvm::MemoryBuffer>
-getInputBufForRequest(Optional<StringRef> SourceFile,
-                      Optional<StringRef> SourceText,
-                      llvm::SmallString<64> &ErrBuf) {
+static std::unique_ptr<llvm::MemoryBuffer> getInputBufForRequest(
+    Optional<StringRef> SourceFile, Optional<StringRef> SourceText,
+    llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem,
+    llvm::SmallString<64> &ErrBuf) {
+  assert(FileSystem);
 
   std::unique_ptr<llvm::MemoryBuffer> InputBuf;
 
@@ -331,7 +345,7 @@ getInputBufForRequest(Optional<StringRef> SourceFile,
 
   } else if (SourceFile.hasValue()) {
     llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> FileBufOrErr =
-      llvm::MemoryBuffer::getFile(*SourceFile);
+        FileSystem->getBufferForFile(*SourceFile);
     if (FileBufOrErr) {
       InputBuf = std::move(FileBufOrErr.get());
     } else {
@@ -347,14 +361,11 @@ getInputBufForRequest(Optional<StringRef> SourceFile,
   return InputBuf;
 }
 
-
-static void
-handleSemanticRequest(RequestDict Req,
-                      ResponseReceiver Receiver,
-                      sourcekitd_uid_t ReqUID,
-                      Optional<StringRef> SourceFile,
-                      Optional<StringRef> SourceText,
-                      ArrayRef<const char *> Args);
+static void handleSemanticRequest(
+    RequestDict Req, ResponseReceiver Receiver, sourcekitd_uid_t ReqUID,
+    Optional<StringRef> SourceFile, Optional<StringRef> SourceText,
+    ArrayRef<const char *> Args,
+    llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem);
 
 void handleRequestImpl(sourcekitd_object_t ReqObj, ResponseReceiver Rec) {
   // NOTE: if we had a connection context, these stats should move into it.
@@ -462,6 +473,35 @@ void handleRequestImpl(sourcekitd_object_t ReqObj, ResponseReceiver Rec) {
 
   llvm::SmallString<64> ErrBuf;
 
+  auto FileSystem = llvm::vfs::getRealFileSystem();
+  if (Optional<StringRef> VFSName = Req.getString(KeyVFSName)) {
+    if (ReqUID != RequestEditorOpen && ReqUID != RequestCodeComplete &&
+        ReqUID != RequestCursorInfo) {
+      return Rec(createErrorRequestInvalid(
+          "This request does not support custom filesystems"));
+    }
+
+    FileSystemProvider *Provider =
+        getGlobalContext().getFileSystemProvider(*VFSName);
+    if (!Provider) {
+      return Rec(createErrorRequestInvalid(
+          "'key.vfs.name' refers to a filesystem that hasn't been "
+          "registered"));
+    }
+
+    SmallVector<const char *, 8> VFSArgs;
+    bool Failed = Req.getStringArray(KeyVFSArgs, VFSArgs, /*isOptional=*/true);
+    if (Failed) {
+      return Rec(
+          createErrorRequestInvalid("'key.vfs.args' not an array of strings"));
+    }
+
+    FileSystem = Provider->getFileSystem(VFSArgs, ErrBuf);
+    if (!FileSystem) {
+      return Rec(createErrorRequestInvalid(ErrBuf.c_str()));
+    }
+  }
+
   SmallVector<const char *, 8> Args;
   bool Failed = Req.getStringArray(KeyCompilerArgs, Args, /*isOptional=*/true);
   if (Failed) {
@@ -470,8 +510,8 @@ void handleRequestImpl(sourcekitd_object_t ReqObj, ResponseReceiver Rec) {
   }
 
   if (ReqUID == RequestDocInfo) {
-    std::unique_ptr<llvm::MemoryBuffer>
-      InputBuf = getInputBufForRequest(SourceFile, SourceText, ErrBuf);
+    std::unique_ptr<llvm::MemoryBuffer> InputBuf = getInputBufForRequest(
+        SourceFile, SourceText, FileSystem, ErrBuf);
     if (!InputBuf)
       return Rec(createErrorRequestFailed(ErrBuf.c_str()));
     StringRef ModuleName;
@@ -484,8 +524,8 @@ void handleRequestImpl(sourcekitd_object_t ReqObj, ResponseReceiver Rec) {
     Optional<StringRef> Name = Req.getString(KeyName);
     if (!Name.hasValue())
       return Rec(createErrorRequestInvalid("missing 'key.name'"));
-    std::unique_ptr<llvm::MemoryBuffer>
-    InputBuf = getInputBufForRequest(SourceFile, SourceText, ErrBuf);
+    std::unique_ptr<llvm::MemoryBuffer> InputBuf =
+        getInputBufForRequest(SourceFile, SourceText, FileSystem, ErrBuf);
     if (!InputBuf)
       return Rec(createErrorRequestFailed(ErrBuf.c_str()));
     int64_t EnableSyntaxMap = true;
@@ -510,7 +550,7 @@ void handleRequestImpl(sourcekitd_object_t ReqObj, ResponseReceiver Rec) {
       return Rec(createErrorRequestFailed("Invalid serialization format"));
     Opts.SyntaxSerializationFormat = SyntaxSerializationFormat.getValue();
     Opts.SyntacticOnly = SyntacticOnly;
-    return Rec(editorOpen(*Name, InputBuf.get(), Opts, Args));
+    return Rec(editorOpen(*Name, InputBuf.get(), Opts, Args, FileSystem));
   }
   if (ReqUID == RequestEditorClose) {
     Optional<StringRef> Name = Req.getString(KeyName);
@@ -526,8 +566,8 @@ void handleRequestImpl(sourcekitd_object_t ReqObj, ResponseReceiver Rec) {
     Optional<StringRef> Name = Req.getString(KeyName);
     if (!Name.hasValue())
       return Rec(createErrorRequestInvalid("missing 'key.name'"));
-    std::unique_ptr<llvm::MemoryBuffer>
-    InputBuf = getInputBufForRequest(SourceFile, SourceText, ErrBuf);
+    std::unique_ptr<llvm::MemoryBuffer> InputBuf = getInputBufForRequest(
+        SourceFile, SourceText, FileSystem, ErrBuf);
     if (!InputBuf)
       return Rec(createErrorRequestFailed(ErrBuf.c_str()));
     int64_t Offset = 0;
@@ -680,8 +720,8 @@ void handleRequestImpl(sourcekitd_object_t ReqObj, ResponseReceiver Rec) {
   }
 
   if (ReqUID == RequestSyntacticRename) {
-    std::unique_ptr<llvm::MemoryBuffer>
-    InputBuf = getInputBufForRequest(SourceFile, SourceText, ErrBuf);
+    std::unique_ptr<llvm::MemoryBuffer> InputBuf = getInputBufForRequest(
+        SourceFile, SourceText, FileSystem, ErrBuf);
     if (!InputBuf)
       return Rec(createErrorRequestFailed(ErrBuf.c_str()));
 
@@ -692,8 +732,8 @@ void handleRequestImpl(sourcekitd_object_t ReqObj, ResponseReceiver Rec) {
   }
 
   if (ReqUID == RequestFindRenameRanges) {
-    std::unique_ptr<llvm::MemoryBuffer> InputBuf =
-        getInputBufForRequest(SourceFile, SourceText, ErrBuf);
+    std::unique_ptr<llvm::MemoryBuffer> InputBuf = getInputBufForRequest(
+        SourceFile, SourceText, FileSystem, ErrBuf);
     if (!InputBuf)
       return Rec(createErrorRequestFailed(ErrBuf.c_str()));
 
@@ -826,21 +866,21 @@ void handleRequestImpl(sourcekitd_object_t ReqObj, ResponseReceiver Rec) {
   sourcekitd_request_retain(ReqObj);
   ++numSemaRequests;
   SemaQueue.dispatch(
-    [ReqObj, Rec, ReqUID, SourceFile, SourceText, Args] {
-      RequestDict Req(ReqObj);
-      handleSemanticRequest(Req, Rec, ReqUID, SourceFile, SourceText, Args);
-      sourcekitd_request_release(ReqObj);
-    },
-    /*isStackDeep=*/true);
+      [ReqObj, Rec, ReqUID, SourceFile, SourceText, Args, FileSystem] {
+        RequestDict Req(ReqObj);
+        handleSemanticRequest(Req, Rec, ReqUID, SourceFile, SourceText, Args,
+                              FileSystem);
+        sourcekitd_request_release(ReqObj);
+      },
+      /*isStackDeep=*/true);
 }
 
-static void
-handleSemanticRequest(RequestDict Req,
-                      ResponseReceiver Rec,
-                      sourcekitd_uid_t ReqUID,
-                      Optional<StringRef> SourceFile,
-                      Optional<StringRef> SourceText,
-                      ArrayRef<const char *> Args) {
+static void handleSemanticRequest(
+    RequestDict Req, ResponseReceiver Rec, sourcekitd_uid_t ReqUID,
+    Optional<StringRef> SourceFile, Optional<StringRef> SourceText,
+    ArrayRef<const char *> Args,
+    llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem) {
+  assert(FileSystem);
 
   llvm::SmallString<64> ErrBuf;
 
@@ -848,19 +888,19 @@ handleSemanticRequest(RequestDict Req,
       return Rec(createErrorRequestFailed("semantic editor is disabled"));
 
   if (ReqUID == RequestCodeComplete) {
-    std::unique_ptr<llvm::MemoryBuffer>
-    InputBuf = getInputBufForRequest(SourceFile, SourceText, ErrBuf);
+    std::unique_ptr<llvm::MemoryBuffer> InputBuf =
+        getInputBufForRequest(SourceFile, SourceText, FileSystem, ErrBuf);
     if (!InputBuf)
       return Rec(createErrorRequestFailed(ErrBuf.c_str()));
     int64_t Offset;
     if (Req.getInt64(KeyOffset, Offset, /*isOptional=*/false))
       return Rec(createErrorRequestInvalid("missing 'key.offset'"));
-    return Rec(codeComplete(InputBuf.get(), Offset, Args));
+    return Rec(codeComplete(InputBuf.get(), Offset, Args, FileSystem));
   }
 
   if (ReqUID == RequestCodeCompleteOpen) {
-    std::unique_ptr<llvm::MemoryBuffer> InputBuf =
-        getInputBufForRequest(SourceFile, SourceText, ErrBuf);
+    std::unique_ptr<llvm::MemoryBuffer> InputBuf = getInputBufForRequest(
+        SourceFile, SourceText, FileSystem, ErrBuf);
     if (!InputBuf)
       return Rec(createErrorRequestFailed(ErrBuf.c_str()));
     Optional<StringRef> Name = Req.getString(KeyName);
@@ -885,8 +925,8 @@ handleSemanticRequest(RequestDict Req,
   }
 
   if (ReqUID == RequestTypeContextInfo) {
-    std::unique_ptr<llvm::MemoryBuffer> InputBuf =
-        getInputBufForRequest(SourceFile, SourceText, ErrBuf);
+    std::unique_ptr<llvm::MemoryBuffer> InputBuf = getInputBufForRequest(
+        SourceFile, SourceText, FileSystem, ErrBuf);
     if (!InputBuf)
       return Rec(createErrorRequestFailed(ErrBuf.c_str()));
     int64_t Offset;
@@ -896,8 +936,8 @@ handleSemanticRequest(RequestDict Req,
   }
 
   if (ReqUID == RequestConformingMethodList) {
-    std::unique_ptr<llvm::MemoryBuffer> InputBuf =
-        getInputBufForRequest(SourceFile, SourceText, ErrBuf);
+    std::unique_ptr<llvm::MemoryBuffer> InputBuf = getInputBufForRequest(
+        SourceFile, SourceText, FileSystem, ErrBuf);
     if (!InputBuf)
       return Rec(createErrorRequestFailed(ErrBuf.c_str()));
     int64_t Offset;
@@ -1862,13 +1902,15 @@ public:
 };
 } // end anonymous namespace
 
-static sourcekitd_response_t codeComplete(llvm::MemoryBuffer *InputBuf,
-                                          int64_t Offset,
-                                          ArrayRef<const char *> Args) {
+static sourcekitd_response_t
+codeComplete(llvm::MemoryBuffer *InputBuf, int64_t Offset,
+             ArrayRef<const char *> Args,
+             llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem) {
+  assert(FileSystem);
   ResponseBuilder RespBuilder;
   SKCodeCompletionConsumer CCC(RespBuilder);
   LangSupport &Lang = getGlobalContext().getSwiftLangSupport();
-  Lang.codeComplete(InputBuf, Offset, CCC, Args);
+  Lang.codeComplete(InputBuf, Offset, CCC, Args, FileSystem);
   return CCC.createResponse();
 }
 
@@ -2357,10 +2399,12 @@ public:
 
 static sourcekitd_response_t
 editorOpen(StringRef Name, llvm::MemoryBuffer *Buf,
-           SKEditorConsumerOptions Opts, ArrayRef<const char *> Args) {
+           SKEditorConsumerOptions Opts, ArrayRef<const char *> Args,
+           llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem) {
+  assert(FileSystem);
   SKEditorConsumer EditC(Opts);
   LangSupport &Lang = getGlobalContext().getSwiftLangSupport();
-  Lang.editorOpen(Name, Buf, EditC, Args);
+  Lang.editorOpen(Name, Buf, EditC, Args, FileSystem);
   return EditC.createResponse();
 }
 

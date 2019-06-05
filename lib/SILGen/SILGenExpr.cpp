@@ -500,6 +500,11 @@ namespace {
     RValue visitUnevaluatedInstanceExpr(UnevaluatedInstanceExpr *E,
                                         SGFContext C);
     RValue visitTapExpr(TapExpr *E, SGFContext C);
+
+    // SWIFT_ENABLE_TENSORFLOW
+    RValue visitAutoDiffFunctionExpr(AutoDiffFunctionExpr *E, SGFContext C);
+    RValue visitAutoDiffFunctionExtractOriginalExpr(
+        AutoDiffFunctionExtractOriginalExpr *E, SGFContext C);
   };
 } // end anonymous namespace
 
@@ -2570,7 +2575,9 @@ static SILFunction *getOrCreateKeyPathGetter(SILGenModule &SGM,
   auto signature = SILFunctionType::get(genericSig,
     SILFunctionType::ExtInfo(SILFunctionType::Representation::Thin,
                              /*pseudogeneric*/ false,
-                             /*noescape*/ false),
+                             // SWIFT_ENABLE_TENSORFLOW
+                             /*noescape*/ false,
+                             /*differentiable*/ false),
     SILCoroutineKind::None,
     ParameterConvention::Direct_Unowned,
     params, {}, result, None, SGM.getASTContext());
@@ -2710,7 +2717,9 @@ static SILFunction *getOrCreateKeyPathSetter(SILGenModule &SGM,
   auto signature = SILFunctionType::get(genericSig,
     SILFunctionType::ExtInfo(SILFunctionType::Representation::Thin,
                              /*pseudogeneric*/ false,
-                             /*noescape*/ false),
+                             // SWIFT_ENABLE_TENSORFLOW
+                             /*noescape*/ false,
+                             /*differentiable*/ false),
     SILCoroutineKind::None,
     ParameterConvention::Direct_Unowned,
     params, {}, {}, None, SGM.getASTContext());
@@ -2884,7 +2893,9 @@ getOrCreateKeyPathEqualsAndHash(SILGenModule &SGM,
     auto signature = SILFunctionType::get(genericSig,
       SILFunctionType::ExtInfo(SILFunctionType::Representation::Thin,
                                /*pseudogeneric*/ false,
-                               /*noescape*/ false),
+                               // SWIFT_ENABLE_TENSORFLOW
+                               /*noescape*/ false,
+                               /*differentiable*/ false),
       SILCoroutineKind::None,
       ParameterConvention::Direct_Unowned,
       params, /*yields*/ {}, results, None, C);
@@ -3054,7 +3065,9 @@ getOrCreateKeyPathEqualsAndHash(SILGenModule &SGM,
     auto signature = SILFunctionType::get(genericSig,
       SILFunctionType::ExtInfo(SILFunctionType::Representation::Thin,
                                /*pseudogeneric*/ false,
-                               /*noescape*/ false),
+                               // SWIFT_ENABLE_TENSORFLOW
+                               /*noescape*/ false,
+                               /*differentiable*/ false),
       SILCoroutineKind::None,
       ParameterConvention::Direct_Unowned,
       params, /*yields*/ {}, results, None, C);
@@ -5291,6 +5304,26 @@ RValue RValueEmitter::visitForeignObjectConversionExpr(
 RValue RValueEmitter::visitUnevaluatedInstanceExpr(UnevaluatedInstanceExpr *E,
                                                    SGFContext C) {
   llvm_unreachable("unevaluated_instance expression can never be evaluated");
+}
+
+// SWIFT_ENABLE_TENSORFLOW
+RValue RValueEmitter::visitAutoDiffFunctionExpr(AutoDiffFunctionExpr *E,
+                                                SGFContext C) {
+  auto orig = SGF.emitRValueAsSingleValue(E->getSubExpr());
+  auto destTy = SGF.getLoweredType(E->getType()).castTo<SILFunctionType>();
+  // TODO(rxwei): Use the order specified in E's function type.
+  auto *diffFunc = SGF.B.createAutoDiffFunction(
+      E, destTy->getDifferentiationParameterIndices(), /*order*/ 1,
+      orig.forward(SGF));
+  return RValue(SGF, E, SGF.emitManagedRValueWithCleanup(diffFunc));
+}
+
+RValue RValueEmitter::visitAutoDiffFunctionExtractOriginalExpr(
+    AutoDiffFunctionExtractOriginalExpr *E, SGFContext C) {
+  auto diffFunc = SGF.emitRValueAsSingleValue(E->getSubExpr());
+  auto *orig = SGF.B.createAutoDiffFunctionExtractOriginal(
+      E, diffFunc.forward(SGF));
+  return RValue(SGF, E, SGF.emitManagedRValueWithCleanup(orig));
 }
 
 RValue RValueEmitter::visitTapExpr(TapExpr *E, SGFContext C) {

@@ -26,6 +26,8 @@
 #include "swift/AST/TypeAlignments.h"
 #include "swift/AST/TypeLoc.h"
 #include "swift/AST/TypeRepr.h"
+// SWIFT_ENABLE_TENSORFLOW
+#include "swift/AST/AutoDiff.h"
 #include "swift/AST/Availability.h"
 #include "swift/Basic/InlineBitfield.h"
 #include "llvm/Support/TrailingObjects.h"
@@ -2893,6 +2895,28 @@ public:
 
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::UnevaluatedInstance;
+  }
+};
+
+// SWIFT_ENABLE_TENSORFLOW
+class AutoDiffFunctionExpr : public ImplicitConversionExpr {
+public:
+  AutoDiffFunctionExpr(Expr *subExpr, Type ty)
+      : ImplicitConversionExpr(ExprKind::AutoDiffFunction, subExpr, ty) {}
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprKind::AutoDiffFunction;
+  }
+};
+
+class AutoDiffFunctionExtractOriginalExpr : public ImplicitConversionExpr {
+public:
+  AutoDiffFunctionExtractOriginalExpr(Expr *subExpr, Type ty)
+      : ImplicitConversionExpr(ExprKind::AutoDiffFunctionExtractOriginal,
+                               subExpr, ty) {}
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == ExprKind::AutoDiffFunctionExtractOriginal;
   }
 };
 

@@ -582,3 +582,31 @@ func foo() {}
 #"abc \#(foo)"#
 ##"abc"##
 ##"abc \##(foo)"##
+
+// SWIFT_ENABLE_TENSORFLOW
+@differentiable(jvp: foo(_:_:))
+func bar(_ x: Float, _: Float) -> Float { return 1 }
+
+@differentiable(jvp: foo(_:_:) where T : FloatingPoint)
+func bar<T : Numeric>(_ x: T, _: T) -> T { return 1 }
+
+@differentiable(wrt: x, jvp: foo(_:_:))
+func bar(_ x: Float, _: Float) -> Float { return 1 }
+
+@differentiable(wrt: (self, x, y), jvp: foo(_:_:))
+func bar(_ x: Float, y: Float) -> Float { return 1 }
+
+@differentiable(wrt: (self, x, y), jvp: bar, vjp: foo(_:_:) where T : FloatingPoint)
+func bar<T : Numeric>(_ x: T, y: T) -> T { return 1 }
+
+@differentiating(-)
+func negateDerivative(_ x: Float)
+    -> (value: Float, pullback: (Float) -> Float) {
+  return (-x, { v in -v })
+}
+
+@differentiating(baz(label:_:))
+func bazDerivative(_ x: Float, y: Float)
+    -> (value: Float, pullback: (Float) -> (Float, Float)) {
+  return (x, { v in v })
+}

@@ -70,6 +70,20 @@ function(add_sourcekit_default_compiler_flags target)
     LINK_LIBRARIES_VAR_NAME link_libraries
     LIBRARY_SEARCH_DIRECTORIES_VAR_NAME library_search_directories)
 
+  # SWIFT_ENABLE_TENSORFLOW
+  if(SWIFT_ENABLE_TENSORFLOW)
+    if("${CMAKE_SYSTEM_NAME}" STREQUAL "Darwin")
+      # FIXME: This is a hack: adding rpaths with many `..` that jump across
+      # frameworks is bad practice. It would be cleaner/more robust to copy
+      # the TensorFlow libraries to sourcekitd.framework.
+      list(APPEND link_flags
+        "-Xlinker" "-rpath"
+        "-Xlinker" "@loader_path/../../../swift/${SOURCEKIT_DEPLOYMENT_OS}"
+        "-Xlinker" "-rpath"
+        "-Xlinker" "@loader_path/../../../../../../../swift/${SOURCEKIT_DEPLOYMENT_OS}")
+    endif()
+  endif()
+
   # Convert variables to space-separated strings.
   _list_escape_for_shell("${c_compile_flags}" c_compile_flags)
   _list_escape_for_shell("${link_flags}" link_flags)
@@ -214,7 +228,8 @@ macro(add_sourcekit_executable name)
   cmake_parse_arguments(SOURCEKITEXE
     "EXCLUDE_FROM_ALL"
     ""
-    "LINK_LIBS;LLVM_LINK_COMPONENTS"
+    # SWIFT_ENABLE_TENSORFLOW
+    "C_COMPILE_FLAGS;LINK_LIBS;LLVM_LINK_COMPONENTS"
     ${ARGN})
 
   if (${SOURCEKITEXE_EXCLUDE_FROM_ALL})
@@ -249,6 +264,8 @@ macro(add_sourcekit_executable name)
     endif()
   endif()
   add_sourcekit_default_compiler_flags("${name}")
+  set_property(TARGET "${name}" APPEND_STRING PROPERTY
+	       COMPILE_FLAGS " ${SOURCEKITEXE_C_COMPILE_FLAGS}")
 endmacro()
 
 # Add a new SourceKit framework.

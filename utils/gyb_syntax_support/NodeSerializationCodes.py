@@ -233,6 +233,15 @@ SYNTAX_NODE_SERIALIZATION_CODES = {
     'PoundAssertStmt': 229,
     'SomeType': 230,
     'CustomAttribute': 231,
+    # SWIFT_ENABLE_TENSORFLOW
+    'DifferentiableAttributeArguments': 232,
+    'DifferentiationParamsClause': 233,
+    'DifferentiationParams': 234,
+    'DifferentiationParamList': 235,
+    'DifferentiationParam': 236,
+    'DifferentiableAttributeFuncSpecifier': 237,
+    'FunctionDeclName': 238,
+    'DifferentiatingAttributeArguments': 239,
 }
 
 

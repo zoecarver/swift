@@ -1244,7 +1244,10 @@ ConstraintSystem::getTypeOfMemberReference(
     return getTypeOfReference(value, functionRefKind, locator, useDC);
   }
 
-  FunctionType::Param baseObjParam(baseObjTy);
+  // SWIFT_ENABLE_TENSORFLOW
+  FunctionType::Param baseObjParam(
+      baseObjTy->getInOutObjectType(), Identifier(),
+      ParameterTypeFlags().withInOut(baseObjTy->is<InOutType>()));
 
   if (auto *typeDecl = dyn_cast<TypeDecl>(value)) {
     assert(!isa<ModuleDecl>(typeDecl) && "Nested module?");
@@ -1626,7 +1629,9 @@ resolveOverloadForDeclWithSpecialTypeCheckingSemantics(ConstraintSystem &CS,
     auto bodyClosure = FunctionType::get(arg, result,
         FunctionType::ExtInfo(FunctionType::Representation::Swift,
                               /*noescape*/ true,
-                              /*throws*/ true));
+                              // SWIFT_ENABLE_TENSORFLOW
+                              /*throws*/ true,
+                              /*differentiable*/ false));
     FunctionType::Param args[] = {
       FunctionType::Param(noescapeClosure),
       FunctionType::Param(bodyClosure, CS.getASTContext().getIdentifier("do")),
@@ -1635,7 +1640,9 @@ resolveOverloadForDeclWithSpecialTypeCheckingSemantics(ConstraintSystem &CS,
     refType = FunctionType::get(args, result,
       FunctionType::ExtInfo(FunctionType::Representation::Swift,
                             /*noescape*/ false,
-                            /*throws*/ true));
+                            // SWIFT_ENABLE_TENSORFLOW
+                            /*throws*/ true,
+                            /*differentiable*/ false));
     openedFullType = refType;
     return true;
   }
@@ -1658,7 +1665,9 @@ resolveOverloadForDeclWithSpecialTypeCheckingSemantics(ConstraintSystem &CS,
     auto bodyClosure = FunctionType::get(bodyArgs, result,
         FunctionType::ExtInfo(FunctionType::Representation::Swift,
                               /*noescape*/ true,
-                              /*throws*/ true));
+                              // SWIFT_ENABLE_TENSORFLOW
+                              /*throws*/ true,
+                              /*differentiability*/ false));
     FunctionType::Param args[] = {
       FunctionType::Param(existentialTy),
       FunctionType::Param(bodyClosure, CS.getASTContext().getIdentifier("do")),
@@ -1666,7 +1675,9 @@ resolveOverloadForDeclWithSpecialTypeCheckingSemantics(ConstraintSystem &CS,
     refType = FunctionType::get(args, result,
       FunctionType::ExtInfo(FunctionType::Representation::Swift,
                             /*noescape*/ false,
-                            /*throws*/ true));
+                            // SWIFT_ENABLE_TENSORFLOW
+                            /*throws*/ true,
+                            /*differentiability*/ false));
     openedFullType = refType;
     return true;
   }
@@ -2374,6 +2385,21 @@ bool ConstraintSystem::salvage(SmallVectorImpl<Solution> &viable, Expr *expr) {
   if (TC.getLangOpts().DebugConstraintSolver) {
     auto &log = TC.Context.TypeCheckerDebug->getStream();
     log << "---Attempting to salvage and emit diagnostics---\n";
+  }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  if (DC->getParentModule()->getNameStr().startswith("__lldb_expr") &&
+      viable.size() > 1) {
+    // TODO(https://bugs.swift.org/browse/SR-9814):
+    // If in LLDB repl mode, patch up the solution if we have ambiguity.
+    //
+    // This is a *temporary* short-term hack that simply returns the last
+    // solution.  It seems to work for now and returns the lastly added
+    // definition during the repl session. However, this is extremely brittle and
+    // is not expected to work correctly all the time.
+    viable[0] = std::move(viable.back());
+    viable.erase(viable.begin() + 1, viable.end());
+    return false;
   }
 
   // Attempt to solve again, capturing all states that come from our attempts to

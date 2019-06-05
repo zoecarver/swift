@@ -61,9 +61,16 @@ static llvm::cl::opt<bool> AbortOnFailure(
                               "verify-abort-on-failure",
                               llvm::cl::init(true));
 
+// SWIFT_ENABLE_TENSORFLOW
+// This flag is temporarily set to false because debug scope verification does
+// not handle inlined call sites. This is problematic for deabstraction, which
+// does performance inlining at -Onone.
+// When debug scope verification handles inlined call sites, set this flag to
+// true.
+// Documented at SR-8114.
 static llvm::cl::opt<bool> VerifyDIHoles(
                               "verify-di-holes",
-                              llvm::cl::init(true));
+                              llvm::cl::init(false));
 
 static llvm::cl::opt<bool> SkipConvertEscapeToNoescapeAttributes(
     "verify-skip-convert-escape-to-noescape-attributes", llvm::cl::init(false));
@@ -1463,6 +1470,56 @@ public:
             "operand of end_apply must be a begin_apply");
   }
 
+  // SWIFT_ENABLE_TENSORFLOW
+  void checkAutoDiffFunctionInst(AutoDiffFunctionInst *adfi) {
+    require(adfi->getDifferentiationOrder() > 0,
+            "The differentiation order must be non-zero");
+    auto origTy =
+        adfi->getOriginalFunction()->getType().getAs<SILFunctionType>();
+    require(origTy, "The original function must have a function type");
+    require(!origTy->isDifferentiable(),
+            "The original function must not be @differentiable");
+    if (F.getModule().getStage() == SILStage::Canonical ||
+        adfi->hasAssociatedFunctions()) {
+      for (auto order : range(1, adfi->getDifferentiationOrder() + 1)) {
+        auto pair = adfi->getAssociatedFunctionPair(order);
+        auto jvpType = pair.first->getType().getAs<SILFunctionType>();
+        require(jvpType, "The JVP function must have a function type");
+        require(!jvpType->isDifferentiable(),
+                "The JVP function must not be @differentiable");
+        auto expectedJVPType = origTy->getAutoDiffAssociatedFunctionType(
+            adfi->getParameterIndices(), /*resultIndex*/ 0, order,
+            AutoDiffAssociatedFunctionKind::JVP, F.getModule(),
+            LookUpConformanceInModule(F.getModule().getSwiftModule()));
+        require(expectedJVPType == jvpType, "Unexpected JVP function type");
+        auto vjpType = pair.second->getType().getAs<SILFunctionType>();
+        require(vjpType, "The VJP function must have a function type");
+        require(!vjpType->isDifferentiable(),
+                "The VJP function must not be @differentiable");
+        auto expectedVJPType = origTy->getAutoDiffAssociatedFunctionType(
+            adfi->getParameterIndices(), /*resultIndex*/ 0, order,
+            AutoDiffAssociatedFunctionKind::VJP, F.getModule(),
+            LookUpConformanceInModule(F.getModule().getSwiftModule()));
+        require(expectedVJPType == vjpType, "Unexpected VJP function type");
+      }
+    }
+  }
+  
+  void checkAutoDiffFunctionExtractInst(AutoDiffFunctionExtractInst *adfei) {
+    if (adfei->getExtractee() == AutoDiffFunctionExtractee::Original)
+      require(adfei->getDifferentiationOrder() == 0,
+              "Differentiation order should not have been set when the original"
+              " function is being extracted");
+    else
+      require(adfei->getDifferentiationOrder() > 0,
+              "Extraction of associated functions requires a differentiation "
+              "order");
+    auto fnTy = adfei->getFunctionOperand()->getType().getAs<SILFunctionType>();
+    require(fnTy, "The function operand must have a function type");
+    require(fnTy->isDifferentiable(),
+            "The function operand must be an '@differentiable' function");
+  }
+
   void verifyLLVMIntrinsic(BuiltinInst *BI, llvm::Intrinsic::ID ID) {
     // Certain llvm intrinsic require constant values as their operands.
     // Consequently, these must not be phi nodes (aka. basic block arguments).
@@ -1632,7 +1689,7 @@ public:
     if (BI->getIntrinsicInfo().ID != llvm::Intrinsic::not_intrinsic)
       verifyLLVMIntrinsic(BI, BI->getIntrinsicInfo().ID);
   }
-  
+
   void checkFunctionRefBaseInst(FunctionRefBaseInst *FRI) {
     auto fnType = requireObjectType(SILFunctionType, FRI,
                                     "result of function_ref");
@@ -4613,6 +4670,43 @@ public:
             "have at least one argument for self.");
   }
 
+  /// SWIFT_ENABLE_TENSORFLOW
+  /// Verify the [differentiable] attribute.
+  void verifyDifferentiableAttr(SILFunction *F, SILDifferentiableAttr &Attr) {
+    std::function<unsigned(Type)> countParams;
+    countParams = [&](Type type) -> unsigned {
+      auto *fnTy = type->getAs<SILFunctionType>();
+      if (!fnTy)
+        return 0;
+      if (fnTy->getNumResults() != 1)
+        return fnTy->getNumParameters();
+      return fnTy->getNumParameters() +
+             countParams(fnTy->getResults()[0].getType());
+    };
+
+    // Parameter indices must be specified.
+    require(!Attr.getIndices().parameters->isEmpty(),
+            "Parameter indices cannot be empty");
+    // JVP and VJP must be specified in canonical SIL.
+    if (F->getModule().getStage() == SILStage::Canonical)
+      require(!Attr.getJVPName().empty() && !Attr.getVJPName().empty(),
+              "JVP and VJP must be specified in canonical SIL");
+    // Verify if specified parameter indices are valid.
+    auto numParams = countParams(F->getLoweredFunctionType());
+    int lastIndex = -1;
+    for (auto paramIdx : Attr.getIndices().parameters->getIndices()) {
+      require(paramIdx < numParams, "Parameter index out of bounds.");
+      auto currentIdx = (int)paramIdx;
+      require(currentIdx > lastIndex, "Parameter indices not ascending.");
+      lastIndex = currentIdx;
+    }
+    // TODO: Verify if the specified JVP/VJP function has the right signature.
+    // SIL function verification runs right after a function is parsed.
+    // However, the JVP/VJP function may come after the this function. Without
+    // changing the compiler too much, is there a way to verify this at a module
+    // level, after everything is parsed?
+  }
+
   struct VerifyFlowSensitiveRulesDetails {
     enum CFGState {
       /// No special rules are in play.
@@ -4971,6 +5065,10 @@ public:
 
     CanSILFunctionType FTy = F->getLoweredFunctionType();
     verifySILFunctionType(FTy);
+
+    // SWIFT_ENABLE_TENSORFLOW
+    for (auto *RDiffAttr : F->getDifferentiableAttrs())
+      verifyDifferentiableAttr(F, *RDiffAttr);
 
     if (F->isExternalDeclaration()) {
       if (F->hasForeignBody())

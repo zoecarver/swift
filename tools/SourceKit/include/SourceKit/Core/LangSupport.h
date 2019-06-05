@@ -17,9 +17,11 @@
 #include "SourceKit/Support/UIdent.h"
 #include "llvm/Support/VersionTuple.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallString.h"
 #include "swift/AST/Type.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include <functional>
 #include <memory>
 #include <unordered_set>
@@ -641,9 +643,10 @@ public:
                            ArrayRef<const char *> Args,
                            StringRef Hash) = 0;
 
-  virtual void codeComplete(llvm::MemoryBuffer *InputBuf, unsigned Offset,
-                            CodeCompletionConsumer &Consumer,
-                            ArrayRef<const char *> Args) = 0;
+  virtual void
+  codeComplete(llvm::MemoryBuffer *InputBuf, unsigned Offset,
+               CodeCompletionConsumer &Consumer, ArrayRef<const char *> Args,
+               llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem) = 0;
 
   virtual void codeCompleteOpen(StringRef name, llvm::MemoryBuffer *inputBuf,
                                 unsigned offset, OptionsDictionary *options,
@@ -667,9 +670,10 @@ public:
   virtual void
   codeCompleteSetCustom(ArrayRef<CustomCompletionInfo> completions) = 0;
 
-  virtual void editorOpen(StringRef Name, llvm::MemoryBuffer *Buf,
-                          EditorConsumer &Consumer,
-                          ArrayRef<const char *> Args) = 0;
+  virtual void
+  editorOpen(StringRef Name, llvm::MemoryBuffer *Buf, EditorConsumer &Consumer,
+             ArrayRef<const char *> Args,
+             llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem) = 0;
 
   virtual void editorOpenInterface(EditorConsumer &Consumer,
                                    StringRef Name,
@@ -718,12 +722,21 @@ public:
                                        unsigned Length,
                                        EditorConsumer &Consumer) = 0;
 
+<<<<<<< HEAD
   virtual void getCursorInfo(StringRef Filename, unsigned Offset,
                              unsigned Length, bool Actionables,
                              bool CancelOnSubsequentRequest,
                              ArrayRef<const char *> Args,
                       std::function<void(const RequestResult<CursorInfoData> &)> Receiver) = 0;
 
+=======
+  virtual void
+  getCursorInfo(StringRef Filename, unsigned Offset, unsigned Length,
+                bool Actionables, bool CancelOnSubsequentRequest,
+                ArrayRef<const char *> Args,
+                llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem,
+                std::function<void(const CursorInfoData &)> Receiver) = 0;
+>>>>>>> cec88da425
 
   virtual void getNameInfo(StringRef Filename, unsigned Offset,
                            NameTranslatingInfo &Input,
@@ -735,11 +748,19 @@ public:
                             ArrayRef<const char *> Args,
                             std::function<void(const RequestResult<RangeInfo> &)> Receiver) = 0;
 
+<<<<<<< HEAD
   virtual void
   getCursorInfoFromUSR(StringRef Filename, StringRef USR,
                        bool CancelOnSubsequentRequest,
                        ArrayRef<const char *> Args,
                      std::function<void(const RequestResult<CursorInfoData> &)> Receiver) = 0;
+=======
+  virtual void getCursorInfoFromUSR(
+      StringRef Filename, StringRef USR, bool CancelOnSubsequentRequest,
+      ArrayRef<const char *> Args,
+      llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> FileSystem,
+      std::function<void(const CursorInfoData &)> Receiver) = 0;
+>>>>>>> cec88da425
 
   virtual void findRelatedIdentifiersInFile(StringRef Filename,
                                             unsigned Offset,

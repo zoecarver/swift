@@ -3397,6 +3397,16 @@ public:
   /// Retrieve information about this type as a property wrapper.
   PropertyWrapperTypeInfo getPropertyWrapperTypeInfo() const;
 
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Get effective memberwise initializer for the given nominal type, if it
+  /// exists: either a synthesized memberwise initializer or a user-defined
+  /// initializer with the same signature.
+  ConstructorDecl *getEffectiveMemberwiseInitializer();
+
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Add `@_fixed_layout` attribute to the nominal type, if possible.
+  void addFixedLayoutAttr();
+
 private:
   /// Predicate used to filter StoredPropertyRange.
   struct ToStoredProperty {
@@ -5943,6 +5953,9 @@ public:
 
   bool isStatic() const {
     return Bits.FuncDecl.IsStatic;
+  }
+  bool isCallable() const {
+    return getName().str() == "callAsFunction" && isInstanceMember();
   }
   /// \returns the way 'static'/'class' was spelled in the source.
   StaticSpellingKind getStaticSpelling() const {
