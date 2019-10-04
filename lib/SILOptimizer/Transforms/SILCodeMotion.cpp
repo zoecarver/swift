@@ -32,6 +32,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 
+#include <iostream>
+
 STATISTIC(NumSunk, "Number of instructions sunk");
 STATISTIC(NumRefCountOpsSimplified, "Number of enum ref count ops simplified");
 STATISTIC(NumHoisted, "Number of instructions hoisted");
@@ -377,6 +379,52 @@ bool BBEnumTagDataflowState::initWithFirstPred(SILBasicBlock *FirstPredBB) {
 
 void BBEnumTagDataflowState::mergeSinglePredTermInfoIntoState(
     SILBasicBlock *Pred) {
+  
+  // Ignore the `std::cout` calls, this is a WIP.
+  
+  SILBuilder Builder(Pred->begin());
+  
+  if (auto *SL = dyn_cast<StringLiteralInst>(&Pred->front())) {
+    for (auto begin = Pred->begin(); begin != Pred->end(); ++begin) {
+      if (auto *FN = dyn_cast<FunctionRefInst>(begin)) {
+        std::cout << "fn name: " << FN->getInitiallyReferencedFunction()->getName().data() << std::endl;
+      }
+      
+      if (auto *Ref = dyn_cast<ApplyInst>(begin)) {
+        StringRef FirstArg;
+        
+        for (auto& Arg : Ref->getArgumentOperands()) {
+          ValueBase *V = (ValueBase*)Arg.get().getOpaqueValue();
+          SILType Ty = V->getType();
+          Operand * Defined = *V->use_begin();
+          if (auto *MakeStr = dyn_cast<ApplyInst>(Defined->get())) {
+            if (auto *SL = dyn_cast<StringLiteralInst>(MakeStr->getArgumentOperands()[0].get())) {
+              std::cout << "Literal: " << SL->getValue().data() << std::endl;
+              
+              if (FirstArg.empty()) {
+                FirstArg = SL->getValue();
+                continue;
+              }
+              
+              APInt IsSame(1, FirstArg == SL->getValue());
+              auto *ResInst = Builder.createIntegerLiteral(Ref->getLoc(),
+                                                    			 SILType::getBuiltinIntegerType(1,Pred->getModule().getASTContext()),
+                                                    			 IsSame);
+              Ref->replaceAllUsesWith(ResInst);
+            }
+          }
+          
+          std::cout << "Found type named: " << Ty.getAsString() << std::endl;
+        }
+                
+        std::string out;
+        llvm::raw_string_ostream r_out(out);
+        Ref->print(r_out);
+        std::cout << "dump: " << out << std::endl;
+      }
+    }
+  }
+  
   // Grab the terminator of our one predecessor and if it is a switch enum, mix
   // it into this state.
   TermInst *PredTerm = Pred->getTerminator();
