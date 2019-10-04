@@ -407,10 +407,21 @@ void BBEnumTagDataflowState::mergeSinglePredTermInfoIntoState(
               }
               
               APInt IsSame(1, FirstArg == SL->getValue());
-              auto *ResInst = Builder.createIntegerLiteral(Ref->getLoc(),
-                                                    			 SILType::getBuiltinIntegerType(1,Pred->getModule().getASTContext()),
-                                                    			 IsSame);
-              Ref->replaceAllUsesWith(ResInst);
+              
+              SILBuilder B(Ref);
+              SILType IntBoolTy = SILType::getBuiltinIntegerType(1, B.getASTContext());
+              auto C1 = B.createIntegerLiteral(Ref->getLoc(), IntBoolTy, IsSame);
+              auto TrueStruct = B.createStruct(Ref->getLoc(), Ref->getType(), {C1});
+              
+//              SILType BoolType = SILType::getBuiltinIntegerType(1,Pred->getModule().getASTContext()); // Builder.createInteger // Ref->getType(); // .castTo<StructType>();
+//
+//              auto *ResLiteral = Builder.createIntegerLiteral(Ref->getLoc(),
+//                                                    			 BoolType,
+//                                                    			 IsSame);
+//              StructInst *ResInst = Builder.createStruct(Ref->getLoc(),
+//                                                         SILType::getPrimitiveObjectType(BoolType.getASTType()),
+//              																					 {ResLiteral});
+              Ref->replaceAllUsesWith(TrueStruct);
             }
           }
           
