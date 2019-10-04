@@ -157,6 +157,7 @@ public:
                                         RCIdentityFunctionInfo *RCIA);
   void handlePredSwitchEnum(SwitchEnumInst *S);
   void handlePredCondSelectEnum(CondBranchInst *CondBr);
+  void handleStringCmp(SILBasicBlock *Pred);
 
   /// Helper method which initializes this state map with the data from the
   /// first predecessor BB.
@@ -294,6 +295,55 @@ void BBEnumTagDataflowState::handlePredSwitchEnum(SwitchEnumInst *S) {
                    "the switch_enum.");
 }
 
+void BBEnumTagDataflowState::handleStringCmp(SILBasicBlock *Pred) {
+  SILBasicBlock::iterator PrevIter = Pred->begin();
+  
+  // Find all apply instructions
+  for (auto begin = Pred->begin(); begin != Pred->end(); PrevIter = begin, (void)++begin) {
+    if (auto *AI = dyn_cast<ApplyInst>(begin)) {
+      // Figure out if we're calling a stirng compare function
+      if (PrevIter == begin) continue;
+      if (auto *FR = dyn_cast<FunctionRefInst>(PrevIter)) {
+        if (!FR->getReferencedFunctionOrNull()->getName().contains("stringCompare")) {
+          continue;
+        } else {
+          std::cout << "working with fn" << std::endl;
+        }
+      } else {
+        continue;
+      }
+      
+      StringRef FirstArg; // Keep track of one of the arguments
+      
+      for (auto& Arg : AI->getArgumentOperands()) {
+        ValueBase *V = (ValueBase*)Arg.get().getOpaqueValue();
+        Operand * Defined = *V->use_begin(); // Find where the argument was defined
+        std::string out;
+        llvm::raw_string_ostream r_out(out);
+        Defined->get()->print(r_out);
+        std::cout << "dump: " << out << std::endl;
+        if (auto *MakeStr = dyn_cast<ApplyInst>(Defined->get())) {
+          if (auto *SL = dyn_cast<StringLiteralInst>(MakeStr->getArgumentOperands()[0].get())) {
+            if (FirstArg.empty()) {
+              FirstArg = SL->getValue();
+              continue;
+            }
+            
+            APInt IsSame(1, FirstArg == SL->getValue());
+            SILBuilder B(AI);
+            SILType IntBoolTy = SILType::getBuiltinIntegerType(1, B.getASTContext());
+            auto C1 = B.createIntegerLiteral(AI->getLoc(), IntBoolTy, IsSame);
+            auto TrueStruct = B.createStruct(AI->getLoc(), AI->getType(), {C1});
+            
+            std::cout << "replacing fn" << std::endl;
+            AI->replaceAllUsesWith(TrueStruct);
+          }
+        }
+      }
+    }
+  }
+}
+
 void BBEnumTagDataflowState::handlePredCondSelectEnum(CondBranchInst *CondBr) {
 
   auto *EITI = dyn_cast<SelectEnumInst>(CondBr->getCondition());
@@ -379,62 +429,8 @@ bool BBEnumTagDataflowState::initWithFirstPred(SILBasicBlock *FirstPredBB) {
 
 void BBEnumTagDataflowState::mergeSinglePredTermInfoIntoState(
     SILBasicBlock *Pred) {
-  
-  // Ignore the `std::cout` calls, this is a WIP.
-  
-  SILBuilder Builder(Pred->begin());
-  
-  if (auto *SL = dyn_cast<StringLiteralInst>(&Pred->front())) {
-    for (auto begin = Pred->begin(); begin != Pred->end(); ++begin) {
-      if (auto *FN = dyn_cast<FunctionRefInst>(begin)) {
-        std::cout << "fn name: " << FN->getInitiallyReferencedFunction()->getName().data() << std::endl;
-      }
-      
-      if (auto *Ref = dyn_cast<ApplyInst>(begin)) {
-        StringRef FirstArg;
-        
-        for (auto& Arg : Ref->getArgumentOperands()) {
-          ValueBase *V = (ValueBase*)Arg.get().getOpaqueValue();
-          SILType Ty = V->getType();
-          Operand * Defined = *V->use_begin();
-          if (auto *MakeStr = dyn_cast<ApplyInst>(Defined->get())) {
-            if (auto *SL = dyn_cast<StringLiteralInst>(MakeStr->getArgumentOperands()[0].get())) {
-              std::cout << "Literal: " << SL->getValue().data() << std::endl;
-              
-              if (FirstArg.empty()) {
-                FirstArg = SL->getValue();
-                continue;
-              }
-              
-              APInt IsSame(1, FirstArg == SL->getValue());
-              
-              SILBuilder B(Ref);
-              SILType IntBoolTy = SILType::getBuiltinIntegerType(1, B.getASTContext());
-              auto C1 = B.createIntegerLiteral(Ref->getLoc(), IntBoolTy, IsSame);
-              auto TrueStruct = B.createStruct(Ref->getLoc(), Ref->getType(), {C1});
-              
-//              SILType BoolType = SILType::getBuiltinIntegerType(1,Pred->getModule().getASTContext()); // Builder.createInteger // Ref->getType(); // .castTo<StructType>();
-//
-//              auto *ResLiteral = Builder.createIntegerLiteral(Ref->getLoc(),
-//                                                    			 BoolType,
-//                                                    			 IsSame);
-//              StructInst *ResInst = Builder.createStruct(Ref->getLoc(),
-//                                                         SILType::getPrimitiveObjectType(BoolType.getASTType()),
-//              																					 {ResLiteral});
-              Ref->replaceAllUsesWith(TrueStruct);
-            }
-          }
-          
-          std::cout << "Found type named: " << Ty.getAsString() << std::endl;
-        }
-                
-        std::string out;
-        llvm::raw_string_ostream r_out(out);
-        Ref->print(r_out);
-        std::cout << "dump: " << out << std::endl;
-      }
-    }
-  }
+
+  handleStringCmp(Pred);
   
   // Grab the terminator of our one predecessor and if it is a switch enum, mix
   // it into this state.
