@@ -32,8 +32,6 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 
-#include <iostream>
-
 STATISTIC(NumSunk, "Number of instructions sunk");
 STATISTIC(NumRefCountOpsSimplified, "Number of enum ref count ops simplified");
 STATISTIC(NumHoisted, "Number of instructions hoisted");
@@ -296,32 +294,19 @@ void BBEnumTagDataflowState::handlePredSwitchEnum(SwitchEnumInst *S) {
 }
 
 void BBEnumTagDataflowState::handleStringCmp(SILBasicBlock *Pred) {
-  SILBasicBlock::iterator PrevIter = Pred->begin();
-  
   // Find all apply instructions
-  for (auto begin = Pred->begin(); begin != Pred->end(); PrevIter = begin, (void)++begin) {
+  for (auto begin = Pred->begin(); begin != Pred->end(); ++begin) {
     if (auto *AI = dyn_cast<ApplyInst>(begin)) {
-      // Figure out if we're calling a stirng compare function
-      if (PrevIter == begin) continue;
-      if (auto *FR = dyn_cast<FunctionRefInst>(PrevIter)) {
-        if (!FR->getReferencedFunctionOrNull()->getName().contains("stringCompare")) {
-          continue;
-        } else {
-          std::cout << "working with fn" << std::endl;
-        }
-      } else {
-        continue;
-      }
+      if (auto *FN = dyn_cast<FunctionRefInst>(AI->getCalleeOrigin())) {
+        if (FN->getReferencedFunctionOrNull()->getName() != "$sSS2eeoiySbSS_SStFZ") continue;
+      } else continue;
       
       StringRef FirstArg; // Keep track of one of the arguments
       
       for (auto& Arg : AI->getArgumentOperands()) {
         ValueBase *V = (ValueBase*)Arg.get().getOpaqueValue();
         Operand * Defined = *V->use_begin(); // Find where the argument was defined
-        std::string out;
-        llvm::raw_string_ostream r_out(out);
-        Defined->get()->print(r_out);
-        std::cout << "dump: " << out << std::endl;
+
         if (auto *MakeStr = dyn_cast<ApplyInst>(Defined->get())) {
           if (auto *SL = dyn_cast<StringLiteralInst>(MakeStr->getArgumentOperands()[0].get())) {
             if (FirstArg.empty()) {
@@ -335,7 +320,6 @@ void BBEnumTagDataflowState::handleStringCmp(SILBasicBlock *Pred) {
             auto C1 = B.createIntegerLiteral(AI->getLoc(), IntBoolTy, IsSame);
             auto TrueStruct = B.createStruct(AI->getLoc(), AI->getType(), {C1});
             
-            std::cout << "replacing fn" << std::endl;
             AI->replaceAllUsesWith(TrueStruct);
           }
         }
