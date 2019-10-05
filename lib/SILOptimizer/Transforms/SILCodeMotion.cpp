@@ -298,6 +298,7 @@ void BBEnumTagDataflowState::handleStringCmp(SILBasicBlock *Pred) {
   for (auto begin = Pred->begin(); begin != Pred->end(); ++begin) {
     if (auto *AI = dyn_cast<ApplyInst>(begin)) {
       if (auto *FN = dyn_cast<FunctionRefInst>(AI->getCalleeOrigin())) {
+        // Only keep going if this is an apply instruction
         if (FN->getReferencedFunctionOrNull()->getName() != "$sSS2eeoiySbSS_SStFZ") continue;
       } else continue;
       
@@ -307,7 +308,9 @@ void BBEnumTagDataflowState::handleStringCmp(SILBasicBlock *Pred) {
         ValueBase *V = (ValueBase*)Arg.get().getOpaqueValue();
         Operand * Defined = *V->use_begin(); // Find where the argument was defined
 
+        // The string is created using a function that is passed a string literal
         if (auto *MakeStr = dyn_cast<ApplyInst>(Defined->get())) {
+          // Get the string literal which is the first argument
           if (auto *SL = dyn_cast<StringLiteralInst>(MakeStr->getArgumentOperands()[0].get())) {
             if (FirstArg.empty()) {
               FirstArg = SL->getValue();
