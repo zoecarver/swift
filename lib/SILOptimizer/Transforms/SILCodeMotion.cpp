@@ -311,12 +311,18 @@ void BBEnumTagDataflowState::handleStringCmp(SILBasicBlock *Pred) {
         // The string is created using a function that is passed a string literal
         if (auto *MakeStr = dyn_cast<ApplyInst>(Defined->get())) {
           // Get the string literal which is the first argument
-          if (auto *SL = dyn_cast<StringLiteralInst>(MakeStr->getArgumentOperands()[0].get())) {
+          if (auto *SL = dyn_cast<StringLiteralInst>(MakeStr->getOperand(1))) {
             if (FirstArg.empty()) {
               FirstArg = SL->getValue();
               continue;
             }
             
+            // To make things simple we only compare ascii strings.
+            // To figure out if the string is ascii we can check the third argument given to the string creation function.
+            if (auto *IsAscii = dyn_cast<IntegerLiteralInst>(MakeStr->getOperand(3))) {
+              if (IsAscii->getValue() != 1) continue;
+            } else continue;
+
             APInt IsSame(1, FirstArg == SL->getValue());
             SILBuilder B(AI);
             SILType IntBoolTy = SILType::getBuiltinIntegerType(1, B.getASTContext());
