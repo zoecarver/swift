@@ -28,6 +28,7 @@
 #include "swift/SILOptimizer/PassManager/Passes.h"
 #include "swift/SILOptimizer/PassManager/Transforms.h"
 #include "swift/SILOptimizer/Utils/CanonicalizeInstruction.h"
+#include "swift/SILOptimizer/Utils/ConstExpr.h"
 #include "swift/SILOptimizer/Utils/Local.h"
 #include "swift/SILOptimizer/Utils/SILOptFunctionBuilder.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -399,34 +400,24 @@ SILCombiner::stringCompareConstantFolding(SILBasicBlock *Pred) {
       StringRef FirstArg; // Keep track of one of the arguments
       
       for (auto& Arg : AI->getArgumentOperands()) {
-        ValueBase *V = (ValueBase*)Arg.get().getOpaqueValue();
-        Operand * Defined = *V->use_begin(); // Find where the argument was defined
-
-        // The string is created using a function that is passed a string literal
-        if (auto *MakeStr = dyn_cast<ApplyInst>(Defined->get())) {
-          // Get the string literal which is the first argument
-          if (auto *SL = dyn_cast<StringLiteralInst>(MakeStr->getOperand(1))) {
-            if (FirstArg.empty()) {
-              FirstArg = SL->getValue();
-              continue;
-            }
-            
-            // To make things simple we only compare ascii strings.
-            // To figure out if the string is ascii we can check the third argument given to the string creation function.
-            if (auto *IsAscii = dyn_cast<IntegerLiteralInst>(MakeStr->getOperand(3))) {
-              if (IsAscii->getValue() != 1) continue;
-            } else continue;
-
-            APInt IsSame(1, FirstArg == SL->getValue());
-            SILBuilder B(AI);
-            SILType IntBoolTy = SILType::getBuiltinIntegerType(1, B.getASTContext());
-            auto C1 = B.createIntegerLiteral(AI->getLoc(), IntBoolTy, IsSame);
-            auto TrueStruct = B.createStruct(AI->getLoc(), AI->getType(), {C1});
-            
-            AI->replaceAllUsesWith(TrueStruct);
-            Changed |= true;
-          }
+        auto info = StringLiteralInfo::create(Arg.get());
+        if (!info) continue;
+        if (!info.getValue().isAscii) continue;
+        
+        // Get the string literal which is the first argument
+        if (FirstArg.empty()) {
+          FirstArg = info.getValue().value;
+          continue;
         }
+        
+         APInt IsSame(1, FirstArg == info.getValue().value);
+         SILBuilder B(AI);
+         SILType IntBoolTy = SILType::getBuiltinIntegerType(1, B.getASTContext());
+         auto C1 = B.createIntegerLiteral(AI->getLoc(), IntBoolTy, IsSame);
+         auto TrueStruct = B.createStruct(AI->getLoc(), AI->getType(), {C1});
+         
+         AI->replaceAllUsesWith(TrueStruct);
+         Changed |= true;
       }
     }
   }
