@@ -180,6 +180,10 @@ bool SILCombiner::doOneIteration(SILFunction &F, unsigned Iteration) {
   addReachableCodeToWorklist(&*F.begin());
 
   SILCombineCanonicalize scCanonicalize(Worklist);
+  
+  for (auto& block : F) {
+    MadeChange |= stringCompareConstantFolding(&block);
+  }
 
   // Process until we run out of items in our worklist.
   while (!Worklist.isEmpty()) {
@@ -378,6 +382,56 @@ SILCombiner::eraseInstFromFunction(SILInstruction &I,
   MadeChange = true;
   // Dummy return, so the caller doesn't need to explicitly return nullptr.
   return nullptr;
+}
+
+bool
+SILCombiner::stringCompareConstantFolding(SILBasicBlock *Pred) {
+  bool Changed = false;
+  
+  // Find all apply instructions
+  for (auto begin = Pred->begin(); begin != Pred->end(); ++begin) {
+    if (auto *AI = dyn_cast<ApplyInst>(begin)) {
+      if (auto *FN = dyn_cast<FunctionRefInst>(AI->getCalleeOrigin())) {
+        // Only keep going if this is an apply instruction
+        if (FN->getReferencedFunctionOrNull()->getName() != "$sSS2eeoiySbSS_SStFZ") continue;
+      } else continue;
+      
+      StringRef FirstArg; // Keep track of one of the arguments
+      
+      for (auto& Arg : AI->getArgumentOperands()) {
+        ValueBase *V = (ValueBase*)Arg.get().getOpaqueValue();
+        Operand * Defined = *V->use_begin(); // Find where the argument was defined
+
+        // The string is created using a function that is passed a string literal
+        if (auto *MakeStr = dyn_cast<ApplyInst>(Defined->get())) {
+          // Get the string literal which is the first argument
+          if (auto *SL = dyn_cast<StringLiteralInst>(MakeStr->getOperand(1))) {
+            if (FirstArg.empty()) {
+              FirstArg = SL->getValue();
+              continue;
+            }
+            
+            // To make things simple we only compare ascii strings.
+            // To figure out if the string is ascii we can check the third argument given to the string creation function.
+            if (auto *IsAscii = dyn_cast<IntegerLiteralInst>(MakeStr->getOperand(3))) {
+              if (IsAscii->getValue() != 1) continue;
+            } else continue;
+
+            APInt IsSame(1, FirstArg == SL->getValue());
+            SILBuilder B(AI);
+            SILType IntBoolTy = SILType::getBuiltinIntegerType(1, B.getASTContext());
+            auto C1 = B.createIntegerLiteral(AI->getLoc(), IntBoolTy, IsSame);
+            auto TrueStruct = B.createStruct(AI->getLoc(), AI->getType(), {C1});
+            
+            AI->replaceAllUsesWith(TrueStruct);
+            Changed |= true;
+          }
+        }
+      }
+    }
+  }
+  
+  return Changed;
 }
 
 //===----------------------------------------------------------------------===//
