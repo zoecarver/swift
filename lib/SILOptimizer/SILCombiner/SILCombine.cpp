@@ -394,7 +394,7 @@ SILCombiner::stringCompareConstantFolding(SILBasicBlock *Pred) {
     if (auto *AI = dyn_cast<ApplyInst>(begin)) {
       if (auto *FN = dyn_cast<FunctionRefInst>(AI->getCalleeOrigin())) {
         // Only keep going if this is an apply instruction
-        if (FN->getReferencedFunctionOrNull()->getName() != "$sSS2eeoiySbSS_SStFZ") continue;
+        if (!FN->getReferencedFunctionOrNull()->hasSemanticsAttr("string.equals")) continue;
       } else continue;
       
       StringRef FirstArg; // Keep track of one of the arguments
