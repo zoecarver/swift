@@ -4634,6 +4634,18 @@ namespace {
 
       auto component = KeyPathExpr::Component::forSubscriptWithPrebuiltIndexExpr(
           ref, newIndexExpr, labels, resolvedTy, componentLoc, {});
+      
+      if (overload.choice.getKind() == OverloadChoiceKind::KeyPathApplication) {
+        auto *subscript = dyn_cast<SubscriptExpr>(indexExpr);
+        if (subscript == nullptr) goto done;
+        
+        indexExpr = buildSubscriptHelper(subscript->getBase(), newIndexExpr, labels, overload, false, locator, false, AccessSemantics::Ordinary);
+        newIndexExpr = coerceCallArguments(indexExpr, subscriptType, ref,
+                            /*applyExpr*/ nullptr, labels,
+                            /*hasTrailingClosure*/ false, locator);
+        component = KeyPathExpr::Component::forSubscriptWithPrebuiltIndexExpr(ref, newIndexExpr, labels, resolvedTy, componentLoc, {});
+      }
+      done:
 
       // We need to be able to hash the captured index values in order for
       // KeyPath itself to be hashable, so check that all of the subscript
