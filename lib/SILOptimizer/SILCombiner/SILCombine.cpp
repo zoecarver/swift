@@ -239,8 +239,6 @@ bool SILCombiner::runOnFunction(SILFunction &F) {
   return Changed;
 }
 
-<<<<<<< HEAD
-=======
 // Insert the instruction New before instruction Old in Old's parent BB. Add
 // New to the worklist.
 SILInstruction *SILCombiner::insertNewInstBefore(SILInstruction *New,
@@ -363,7 +361,6 @@ SILCombiner::stringCompareConstantFolding(SILBasicBlock *Pred) {
   return Changed;
 }
 
->>>>>>> b43d8bed648b5f0ada31f58d65b0a06b7ba0b416
 //===----------------------------------------------------------------------===//
 //                                Entry Points
 //===----------------------------------------------------------------------===//
