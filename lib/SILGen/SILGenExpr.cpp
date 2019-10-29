@@ -50,6 +50,8 @@
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <iostream>
+
 #include "swift/AST/DiagnosticsSIL.h"
 
 using namespace swift;
@@ -3586,8 +3588,9 @@ RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
                             /*for descriptor*/ false));
       lowerSubscriptOperands(component);
     
-      assert(numOperands == operands.size()
-             && "operand count out of sync");
+      std::cout << numOperands << " " << operands.size() << std::endl;
+//      assert(numOperands == operands.size()
+//             && "operand count out of sync");
       baseTy = loweredComponents.back().getComponentType();
 
       break;

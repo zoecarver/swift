@@ -4342,10 +4342,33 @@ namespace {
             break;
           }
 
-          ArrayRef<Identifier> subscriptLabels;
-          if (!isDynamicMember)
-            subscriptLabels = origComponent.getSubscriptLabels();
+          SmallVector<Identifier, 4> subscriptLabels;
+          
+          auto subscriptType =
+              simplifyType(foundDecl->openedType)->castTo<AnyFunctionType>();
+          
+          for (auto &param : subscriptType->getParams()) {
+            subscriptLabels.push_back(param.getLabel());
+          }
+          
+//          if (!isDynamicMember)
+//            subscriptLabels = origComponent.getSubscriptLabels();
 
+//          auto *path = E->getParsedPath();
+//          auto *root = dyn_cast<TypeExpr>(E->getParsedRoot());
+//          assert(root != nullptr);
+//
+//          auto subscriptType =
+//              simplifyType(foundDecl->openedType)->castTo<AnyFunctionType>();
+//          path->setType(subscriptType->getResult());
+//          root->setType(foundDecl->openedType);
+//
+//          path->dump();
+//          root->dump();
+//
+//          auto *subscript = buildSubscript(root, path, subscriptLabels, false, locator, false, AccessSemantics::Ordinary);
+//          subscript->dump();
+          
           component = buildKeyPathSubscriptComponent(
               *foundDecl, origComponent.getLoc(), origComponent.getIndexExpr(),
               subscriptLabels, locator);
@@ -4627,25 +4650,13 @@ namespace {
       auto resolvedTy = subscriptType->getResult();
 
       // Coerce the indices to the type the subscript expects.
-      auto *newIndexExpr =
-          coerceCallArguments(indexExpr, subscriptType, ref,
-                              /*applyExpr*/ nullptr, labels,
-                              /*hasTrailingClosure*/ false, locator);
+      auto *newIndexExpr = indexExpr;
+//          coerceCallArguments(indexExpr, subscriptType, ref,
+//                              /*applyExpr*/ nullptr, labels,
+//                              /*hasTrailingClosure*/ false, locator);
 
       auto component = KeyPathExpr::Component::forSubscriptWithPrebuiltIndexExpr(
           ref, newIndexExpr, labels, resolvedTy, componentLoc, {});
-      
-      if (overload.choice.getKind() == OverloadChoiceKind::KeyPathApplication) {
-        auto *subscript = dyn_cast<SubscriptExpr>(indexExpr);
-        if (subscript == nullptr)
-          llvm_unreachable("Keypath with subscript isn't a subscript expr?");
-        
-        indexExpr = buildSubscriptHelper(subscript->getBase(), newIndexExpr, labels, overload, false, locator, false, AccessSemantics::Ordinary);
-        newIndexExpr = coerceCallArguments(indexExpr, subscriptType, ref,
-                            /*applyExpr*/ nullptr, labels,
-                            /*hasTrailingClosure*/ false, locator);
-        component = KeyPathExpr::Component::forSubscriptWithPrebuiltIndexExpr(ref, newIndexExpr, labels, resolvedTy, componentLoc, {});
-      }
 
       // We need to be able to hash the captured index values in order for
       // KeyPath itself to be hashable, so check that all of the subscript

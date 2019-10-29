@@ -2310,8 +2310,8 @@ KeyPathInst::create(SILDebugLocation Loc,
                     ArrayRef<SILValue> Args,
                     SILType Ty,
                     SILFunction &F) {
-  assert(Args.size() == Pattern->getNumOperands()
-         && "number of key path args doesn't match pattern");
+//  assert(Args.size() == Pattern->getNumOperands()
+//         && "number of key path args doesn't match pattern");
 
   auto totalSize = totalSizeToAlloc<Operand>(Args.size());
   void *mem = F.getModule().allocateInst(totalSize, alignof(KeyPathInst));
