@@ -36,6 +36,8 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/SaveAndRestore.h"
 
+#include <iostream>
+
 using namespace swift;
 using namespace constraints;
 
@@ -4342,33 +4344,10 @@ namespace {
             break;
           }
 
-          SmallVector<Identifier, 4> subscriptLabels;
-          
-          auto subscriptType =
-              simplifyType(foundDecl->openedType)->castTo<AnyFunctionType>();
-          
-          for (auto &param : subscriptType->getParams()) {
-            subscriptLabels.push_back(param.getLabel());
-          }
-          
-//          if (!isDynamicMember)
-//            subscriptLabels = origComponent.getSubscriptLabels();
+          ArrayRef<Identifier> subscriptLabels;
+          if (!isDynamicMember)
+            subscriptLabels = origComponent.getSubscriptLabels();
 
-//          auto *path = E->getParsedPath();
-//          auto *root = dyn_cast<TypeExpr>(E->getParsedRoot());
-//          assert(root != nullptr);
-//
-//          auto subscriptType =
-//              simplifyType(foundDecl->openedType)->castTo<AnyFunctionType>();
-//          path->setType(subscriptType->getResult());
-//          root->setType(foundDecl->openedType);
-//
-//          path->dump();
-//          root->dump();
-//
-//          auto *subscript = buildSubscript(root, path, subscriptLabels, false, locator, false, AccessSemantics::Ordinary);
-//          subscript->dump();
-          
           component = buildKeyPathSubscriptComponent(
               *foundDecl, origComponent.getLoc(), origComponent.getIndexExpr(),
               subscriptLabels, locator);
@@ -4603,8 +4582,20 @@ namespace {
     KeyPathExpr::Component buildKeyPathSubscriptComponent(
         SelectedOverload &overload, SourceLoc componentLoc, Expr *indexExpr,
         ArrayRef<Identifier> labels, ConstraintLocator *locator) {
+      indexExpr->dump();
+      
       auto subscript = cast<SubscriptDecl>(overload.choice.getDecl());
       assert(!subscript->isGetterMutating());
+      subscript->dump();
+      
+//      auto indexTy = simplifyType(indexExpr->getType())->castTo<TupleType>();
+//      SubscriptExpr::create(cs.getASTContext(), subscript->, <#Expr *index#>)
+//
+//      SmallVector<Identifier, 4> labelsVec;
+//      for (auto &param : indexTy->getElements()) {
+//        labelsVec.push_back(param.getName());
+//      }
+//      labels = labelsVec;
 
       auto dc = subscript->getInnermostDeclContext();
 
@@ -4650,10 +4641,15 @@ namespace {
       auto resolvedTy = subscriptType->getResult();
 
       // Coerce the indices to the type the subscript expects.
-      auto *newIndexExpr = indexExpr;
-//          coerceCallArguments(indexExpr, subscriptType, ref,
-//                              /*applyExpr*/ nullptr, labels,
-//                              /*hasTrailingClosure*/ false, locator);
+      auto *newIndexExpr =
+          coerceCallArguments(indexExpr, subscriptType, ref,
+                              /*applyExpr*/ nullptr, labels,
+                              /*hasTrailingClosure*/ false, locator);
+      
+//      SmallVector<Identifier, 4> labelsVec;
+//      for (auto &param : subscriptType->getParams()) {
+//        labelsVec.push_back(param.getLabel());
+//      }
 
       auto component = KeyPathExpr::Component::forSubscriptWithPrebuiltIndexExpr(
           ref, newIndexExpr, labels, resolvedTy, componentLoc, {});
@@ -4666,7 +4662,8 @@ namespace {
       auto hashable =
           cs.getASTContext().getProtocol(KnownProtocolKind::Hashable);
 
-      auto fnType = overload.openedType->castTo<FunctionType>();
+      auto fnType = overload.openedType->castTo<FunctionType>(); // simplifyType(indexExpr->getType())->castTo<AnyFunctionType>();
+      fnType->dump();
       for (const auto &param : fnType->getParams()) {
         auto indexType = simplifyType(param.getPlainType());
         // Index type conformance to Hashable protocol has been
@@ -4680,6 +4677,7 @@ namespace {
         conformances.push_back(*hashableConformance);
       }
 
+      std::cout << conformances.size() << std::endl;
       component.setSubscriptIndexHashableConformances(conformances);
       return component;
     }

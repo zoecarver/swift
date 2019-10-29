@@ -30,6 +30,9 @@
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/Twine.h"
+
+#include <iostream>
+
 using namespace swift;
 
 #define EXPR(Id, _) \
@@ -2176,7 +2179,8 @@ void KeyPathExpr::Component::setSubscriptIndexHashableConformances(
     ArrayRef<ProtocolConformanceRef> hashables) {
   switch (getKind()) {
   case Kind::Subscript:
-    assert(hashables.size() == SubscriptSize);
+    std::cout << hashables.size() << " " << SubscriptSize << std::endl;
+//    assert(hashables.size() == SubscriptSize);
     SubscriptHashableConformancesData = getComponentType()->getASTContext()
       .AllocateCopy(hashables)
       .data();
