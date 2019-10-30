@@ -949,10 +949,13 @@ ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
 
   // Apply labels to arguments.
   SmallVector<AnyFunctionType::Param, 8> argsWithLabels;
-  argsWithLabels.reserve(args.size());
-  std::copy_if(args.begin(), args.end(), argsWithLabels.begin(), [](AnyFunctionType::Param param) -> bool {
-    return param.hasLabel();
-  });
+  argsWithLabels.append(args.begin(), args.end());
+  
+  // TODO: above should be the following:
+//  argsWithLabels.reserve(args.size());
+//  std::copy_if(args.begin(), args.end(), argsWithLabels.begin(), [](AnyFunctionType::Param param) -> bool {
+//    return param.hasLabel();
+//  });
 
   // TODO: is this nessisary?
   AnyFunctionType::relabelParams(argsWithLabels, argLabels);

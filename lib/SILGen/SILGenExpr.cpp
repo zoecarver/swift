@@ -3551,11 +3551,10 @@ RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
         return;
       
       if (auto *parenExpr = dyn_cast<ParenExpr>(component.getIndexExpr())) {
-        auto *defaultArg = dyn_cast<DefaultArgumentExpr>(parenExpr->getSubExpr());
-        if (defaultArg == nullptr) return;
-        
-        const ParamDecl *defaultParam = getParameterAt(cast<ValueDecl>(defaultArg->getDefaultArgsOwner().getDecl()), 0);
-        parenExpr->setSubExpr(defaultParam->getDefaultValue());
+        if (auto *defaultArg = dyn_cast<DefaultArgumentExpr>(parenExpr->getSubExpr())) {
+          const ParamDecl *defaultParam = getParameterAt(cast<ValueDecl>(defaultArg->getDefaultArgsOwner().getDecl()), 0);
+          parenExpr->setSubExpr(defaultParam->getDefaultValue());
+        }
       }
       
       if (auto *tupleExpr = dyn_cast<TupleExpr>(component.getIndexExpr())) {
@@ -3563,7 +3562,7 @@ RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
         for (auto *element : tupleExpr->getElements()) {
           if (auto *defaultArg = dyn_cast<DefaultArgumentExpr>(element)) {
             const ParamDecl *defaultParam = getParameterAt(cast<ValueDecl>(defaultArg->getDefaultArgsOwner().getDecl()), count++);
-            tupleExpr->setElement(count, defaultParam->getDefaultValue());
+            tupleExpr->setElement(count - 1, defaultParam->getDefaultValue());
           } else {
             (void)++count;
           }
@@ -3605,7 +3604,7 @@ RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
                             baseTy,
                             /*for descriptor*/ false));
       lowerSubscriptOperands(component);
-    
+
       assert(numOperands == operands.size()
              && "operand count out of sync");
       baseTy = loweredComponents.back().getComponentType();

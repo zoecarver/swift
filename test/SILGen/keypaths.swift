@@ -321,17 +321,17 @@ struct Subscripts<T> {
     set { }
   }
 }
-//
-//struct SubscriptDefaults {
-//  subscript(x: Int = 0) -> T {
-//    get { fatalError() }
-//    set { fatalError() }
-//  }
-//  subscript(x: Int, y: Int, z: Int = 0) -> Int {
-//    get { fatalError() }
-//    set { fatalError() }
-//  }
-//}
+
+struct SubscriptDefaults {
+  subscript(x: Int = 0) -> T {
+    get { fatalError() }
+    set { fatalError() }
+  }
+  subscript(x: Int, y: Int, z: Int = 0) -> Int {
+    get { fatalError() }
+    set { fatalError() }
+  }
+}
 
 // CHECK-LABEL: sil hidden [ossa] @{{.*}}10subscripts
 func subscripts<T: Hashable, U: Hashable>(x: T, y: U, s: String) {
@@ -364,10 +364,10 @@ func subscripts<T: Hashable, U: Hashable>(x: T, y: U, s: String) {
   _ = \Subscripts<T>.[Bass()]
   _ = \Subscripts<T>.[Treble()]
 
-// _ = \SubscriptDefaults.[]
-// _ = \SubscriptDefaults.[0]
-// _ = \SubscriptDefaults.[0, 0]
-// _ = \SubscriptDefaults.[0, 0, 0]
+_ = \SubscriptDefaults.[]
+_ = \SubscriptDefaults.[0]
+_ = \SubscriptDefaults.[0, 0]
+_ = \SubscriptDefaults.[0, 0, 0]
 }
 
 // CHECK-LABEL: sil hidden [ossa] @{{.*}}subclass_generics
