@@ -951,15 +951,15 @@ ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
   SmallVector<AnyFunctionType::Param, 8> argsWithLabels;
   argsWithLabels.append(args.begin(), args.end());
 
-  // TODO: above should be the following:
+  // TODO: is this necessary?
+  AnyFunctionType::relabelParams(argsWithLabels, argLabels);
+
+  // TODO: if the above is necessary, argsWithLabels should be renamed or should be initialized using the following:
   //  argsWithLabels.reserve(args.size());
   //  std::copy_if(args.begin(), args.end(), argsWithLabels.begin(),
   //  [](AnyFunctionType::Param param) -> bool {
   //    return param.hasLabel();
   //  });
-
-  // TODO: is this nessisary?
-  AnyFunctionType::relabelParams(argsWithLabels, argLabels);
 
   // Special case when a single tuple argument if used
   // instead of N distinct arguments e.g.:
