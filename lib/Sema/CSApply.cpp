@@ -4582,20 +4582,8 @@ namespace {
     KeyPathExpr::Component buildKeyPathSubscriptComponent(
         SelectedOverload &overload, SourceLoc componentLoc, Expr *indexExpr,
         ArrayRef<Identifier> labels, ConstraintLocator *locator) {
-      indexExpr->dump();
-      
       auto subscript = cast<SubscriptDecl>(overload.choice.getDecl());
       assert(!subscript->isGetterMutating());
-      subscript->dump();
-      
-//      auto indexTy = simplifyType(indexExpr->getType())->castTo<TupleType>();
-//      SubscriptExpr::create(cs.getASTContext(), subscript->, <#Expr *index#>)
-//
-//      SmallVector<Identifier, 4> labelsVec;
-//      for (auto &param : indexTy->getElements()) {
-//        labelsVec.push_back(param.getName());
-//      }
-//      labels = labelsVec;
 
       auto dc = subscript->getInnermostDeclContext();
 
@@ -4645,11 +4633,6 @@ namespace {
           coerceCallArguments(indexExpr, subscriptType, ref,
                               /*applyExpr*/ nullptr, labels,
                               /*hasTrailingClosure*/ false, locator);
-      
-//      SmallVector<Identifier, 4> labelsVec;
-//      for (auto &param : subscriptType->getParams()) {
-//        labelsVec.push_back(param.getLabel());
-//      }
 
       auto component = KeyPathExpr::Component::forSubscriptWithPrebuiltIndexExpr(
           ref, newIndexExpr, labels, resolvedTy, componentLoc, {});
@@ -4662,8 +4645,7 @@ namespace {
       auto hashable =
           cs.getASTContext().getProtocol(KnownProtocolKind::Hashable);
 
-      auto fnType = overload.openedType->castTo<FunctionType>(); // simplifyType(indexExpr->getType())->castTo<AnyFunctionType>();
-      fnType->dump();
+      auto fnType = overload.openedType->castTo<FunctionType>();
       for (const auto &param : fnType->getParams()) {
         auto indexType = simplifyType(param.getPlainType());
         // Index type conformance to Hashable protocol has been
@@ -4677,7 +4659,6 @@ namespace {
         conformances.push_back(*hashableConformance);
       }
 
-      std::cout << conformances.size() << std::endl;
       component.setSubscriptIndexHashableConformances(conformances);
       return component;
     }
@@ -5279,8 +5260,14 @@ Expr *ExprRewriter::coerceCallArguments(Expr *arg, AnyFunctionType *funcType,
   if (AnyFunctionType::equalParams(args, params))
     return arg;
 
-  // Apply labels to arguments.
-  AnyFunctionType::relabelParams(args, argLabels);
+  std::cout << args.size() << " " << argLabels.size() << std::endl;
+  if (args.size() == 0) {
+    // Apply labels to arguments.
+    AnyFunctionType::relabelParams({}, {});
+  } else {
+    // Apply labels to arguments.
+    AnyFunctionType::relabelParams(args, argLabels);
+  }
 
   MatchCallArgumentListener listener;
   SmallVector<ParamBinding, 4> parameterBindings;

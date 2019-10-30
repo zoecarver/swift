@@ -30,6 +30,8 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Compiler.h"
 
+#include <iostream>
+
 using namespace swift;
 using namespace constraints;
 
@@ -949,8 +951,12 @@ ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
 
   // Apply labels to arguments.
   SmallVector<AnyFunctionType::Param, 8> argsWithLabels;
-  argsWithLabels.append(args.begin(), args.end());
-  AnyFunctionType::relabelParams(argsWithLabels, argLabels);
+  argsWithLabels.reserve(args.size());
+  std::copy_if(args.begin(), args.end(), argsWithLabels.begin(), [](AnyFunctionType::Param param) -> bool {
+    return param.hasLabel();
+  });
+  std::cout << argsWithLabels.size() << " " << argLabels.size() << std::endl;
+  AnyFunctionType::relabelParams({}, {});
 
   // Special case when a single tuple argument if used
   // instead of N distinct arguments e.g.:
