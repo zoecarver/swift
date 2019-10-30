@@ -3523,7 +3523,7 @@ SILGenModule::emitKeyPathComponentForDecl(SILLocation loc,
   llvm_unreachable("unknown kind of storage");
 }
 
-RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {  
+RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
   if (E->isObjC()) {
     return visit(E->getObjCStringLiteralExpr(), C);
   }
@@ -3549,19 +3549,23 @@ RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
     [this, &operands, E](const KeyPathExpr::Component &component) {
       if (!component.getIndexExpr())
         return;
-      
+
       if (auto *parenExpr = dyn_cast<ParenExpr>(component.getIndexExpr())) {
-        if (auto *defaultArg = dyn_cast<DefaultArgumentExpr>(parenExpr->getSubExpr())) {
-          const ParamDecl *defaultParam = getParameterAt(cast<ValueDecl>(defaultArg->getDefaultArgsOwner().getDecl()), 0);
+        if (auto *defaultArg =
+                dyn_cast<DefaultArgumentExpr>(parenExpr->getSubExpr())) {
+          const ParamDecl *defaultParam = getParameterAt(
+              cast<ValueDecl>(defaultArg->getDefaultArgsOwner().getDecl()), 0);
           parenExpr->setSubExpr(defaultParam->getDefaultValue());
         }
       }
-      
+
       if (auto *tupleExpr = dyn_cast<TupleExpr>(component.getIndexExpr())) {
         size_t count = 0;
         for (auto *element : tupleExpr->getElements()) {
           if (auto *defaultArg = dyn_cast<DefaultArgumentExpr>(element)) {
-            const ParamDecl *defaultParam = getParameterAt(cast<ValueDecl>(defaultArg->getDefaultArgsOwner().getDecl()), count++);
+            const ParamDecl *defaultParam = getParameterAt(
+                cast<ValueDecl>(defaultArg->getDefaultArgsOwner().getDecl()),
+                count++);
             tupleExpr->setElement(count - 1, defaultParam->getDefaultValue());
           } else {
             (void)++count;
