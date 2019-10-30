@@ -57,7 +57,7 @@ public:
   }
 
   ExprRetTy visitDefaultArgumentExpr(DefaultArgumentExpr *E, Args...AA) {
-    llvm_unreachable("");
+    llvm_unreachable("DefaultArgumentExpr should not appear in this position");
   }
 
   ExprRetTy visitCallerDefaultArgumentExpr(CallerDefaultArgumentExpr *E, Args... AA) {
