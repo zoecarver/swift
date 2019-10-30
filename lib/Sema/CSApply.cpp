@@ -5258,13 +5258,8 @@ Expr *ExprRewriter::coerceCallArguments(Expr *arg, AnyFunctionType *funcType,
   if (AnyFunctionType::equalParams(args, params))
     return arg;
 
-  if (args.size() == 0) {
-    // Apply labels to arguments.
-    AnyFunctionType::relabelParams({}, {});
-  } else {
-    // Apply labels to arguments.
-    AnyFunctionType::relabelParams(args, argLabels);
-  }
+  // Apply labels to arguments.
+  AnyFunctionType::relabelParams(args, argLabels);
 
   MatchCallArgumentListener listener;
   SmallVector<ParamBinding, 4> parameterBindings;

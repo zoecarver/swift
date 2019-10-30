@@ -2981,7 +2981,7 @@ bool AnyFunctionType::equalParams(CanParamArrayRef a, CanParamArrayRef b) {
 
 void AnyFunctionType::relabelParams(MutableArrayRef<Param> params,
                                     ArrayRef<Identifier> labels) {
-  assert(params.size() == labels.size());
+  assert(params.size() <= labels.size());
   for (auto i : indices(params)) {
     auto &param = params[i];
     param = AnyFunctionType::Param(param.getPlainType(),

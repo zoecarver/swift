@@ -954,7 +954,8 @@ ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
     return param.hasLabel();
   });
 
-  AnyFunctionType::relabelParams({}, {});
+  // TODO: is this nessisary?
+  AnyFunctionType::relabelParams(argsWithLabels, argLabels);
 
   // Special case when a single tuple argument if used
   // instead of N distinct arguments e.g.:
