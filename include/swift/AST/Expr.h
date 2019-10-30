@@ -5122,7 +5122,7 @@ public:
       switch (getKind()) {
       case Kind::Subscript:
       case Kind::UnresolvedSubscript:
-        return {SubscriptLabelsData, (size_t)1};
+        return {SubscriptLabelsData, (size_t)SubscriptSize};
 
       case Kind::Invalid:
       case Kind::OptionalChain:

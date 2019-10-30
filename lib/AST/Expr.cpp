@@ -2176,7 +2176,7 @@ void KeyPathExpr::Component::setSubscriptIndexHashableConformances(
     ArrayRef<ProtocolConformanceRef> hashables) {
   switch (getKind()) {
   case Kind::Subscript:
-//    assert(hashables.size() == SubscriptSize);
+    SubscriptSize = hashables.size();
     SubscriptHashableConformancesData = getComponentType()->getASTContext()
       .AllocateCopy(hashables)
       .data();

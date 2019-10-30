@@ -3524,8 +3524,6 @@ SILGenModule::emitKeyPathComponentForDecl(SILLocation loc,
 }
 
 RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
-  E->dump();
-  
   if (E->isObjC()) {
     return visit(E->getObjCStringLiteralExpr(), C);
   }
@@ -3553,11 +3551,13 @@ RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
         return;
       
       if (auto *tupleExpr = dyn_cast<TupleExpr>(component.getIndexExpr())) {
+        size_t count = 0;
         for (auto *element : tupleExpr->getElements()) {
           if (auto *defaultArg = dyn_cast<DefaultArgumentExpr>(element)) {
-            const ParamDecl *defaultParam = getParameterAt(cast<ValueDecl>(defaultArg->getDefaultArgsOwner().getDecl()), 0);
-            defaultParam->getDefaultValue()->dump();
+            const ParamDecl *defaultParam = getParameterAt(cast<ValueDecl>(defaultArg->getDefaultArgsOwner().getDecl()), count++);
             tupleExpr->setElement(0, defaultParam->getDefaultValue());
+          } else {
+            (void)++count;
           }
         }
       }
@@ -3675,7 +3675,6 @@ RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
                                        : SubstitutionMap(),
                                      operands,
                                      loweredTy);
-  keyPath->dump();
   auto value = SGF.emitManagedRValueWithCleanup(keyPath);
   return RValue(SGF, E, value);
 }

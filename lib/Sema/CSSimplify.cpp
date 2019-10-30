@@ -30,8 +30,6 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Compiler.h"
 
-#include <iostream>
-
 using namespace swift;
 using namespace constraints;
 
@@ -955,7 +953,7 @@ ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
   std::copy_if(args.begin(), args.end(), argsWithLabels.begin(), [](AnyFunctionType::Param param) -> bool {
     return param.hasLabel();
   });
-  std::cout << argsWithLabels.size() << " " << argLabels.size() << std::endl;
+
   AnyFunctionType::relabelParams({}, {});
 
   // Special case when a single tuple argument if used

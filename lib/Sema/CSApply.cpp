@@ -36,8 +36,6 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/SaveAndRestore.h"
 
-#include <iostream>
-
 using namespace swift;
 using namespace constraints;
 
@@ -5260,7 +5258,6 @@ Expr *ExprRewriter::coerceCallArguments(Expr *arg, AnyFunctionType *funcType,
   if (AnyFunctionType::equalParams(args, params))
     return arg;
 
-  std::cout << args.size() << " " << argLabels.size() << std::endl;
   if (args.size() == 0) {
     // Apply labels to arguments.
     AnyFunctionType::relabelParams({}, {});
