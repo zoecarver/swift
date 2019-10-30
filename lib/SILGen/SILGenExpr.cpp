@@ -3608,7 +3608,7 @@ RValue RValueEmitter::visitKeyPathExpr(KeyPathExpr *E, SGFContext C) {
                             baseTy,
                             /*for descriptor*/ false));
       lowerSubscriptOperands(component);
-
+    
       assert(numOperands == operands.size()
              && "operand count out of sync");
       baseTy = loweredComponents.back().getComponentType();
