@@ -951,7 +951,7 @@ ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
   SmallVector<AnyFunctionType::Param, 8> argsWithLabels;
   argsWithLabels.append(args.begin(), args.end());
   AnyFunctionType::relabelParams(argsWithLabels, argLabels);
-  
+
   // Special case when a single tuple argument if used
   // instead of N distinct arguments e.g.:
   //

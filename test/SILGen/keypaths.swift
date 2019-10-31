@@ -376,7 +376,7 @@ func subscripts<T: Hashable, U: Hashable>(x: T, y: U, s: String) {
   _ = \SubscriptDefaults.[0]
   _ = \SubscriptDefaults.[0, 0]
   _ = \SubscriptDefaults.[0, 0, 0]
-  
+
   _ = \SubscriptDefaults.[false]
   _ = \SubscriptDefaults.[false, bool: false]
   _ = \SubscriptDefaults.[bool: false, 0]
