@@ -4917,8 +4917,8 @@ public:
     
     union {
       struct {
-        unsigned subscripConformancestSize;
-        unsigned subscriptLabelsSize;
+        unsigned numConformances;
+        unsigned numLabels;
       } SubscriptSize;
       unsigned TupleIndex;
     };
@@ -5125,7 +5125,7 @@ public:
       switch (getKind()) {
       case Kind::Subscript:
       case Kind::UnresolvedSubscript:
-        return {SubscriptLabelsData, (size_t)SubscriptSize.subscriptLabelsSize};
+        return {SubscriptLabelsData, (size_t)SubscriptSize.numLabels};
 
       case Kind::Invalid:
       case Kind::OptionalChain:
@@ -5146,7 +5146,7 @@ public:
       case Kind::Subscript:
         if (!SubscriptHashableConformancesData)
           return {};
-        return {SubscriptHashableConformancesData, (size_t)SubscriptSize.subscripConformancestSize};
+        return {SubscriptHashableConformancesData, (size_t)SubscriptSize.numConformances};
 
       case Kind::UnresolvedSubscript:
       case Kind::Invalid:
