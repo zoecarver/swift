@@ -1439,6 +1439,7 @@ void EscapeAnalysis::analyzeInstruction(SILInstruction *I,
     case SILInstructionKind::ProjectBoxInst:
     case SILInstructionKind::InitExistentialAddrInst:
     case SILInstructionKind::OpenExistentialAddrInst: {
+      I->dump();
       auto SVI = cast<SingleValueInstruction>(I);
       if (isPointer(SVI)) {
         CGNode *AddrNode = ConGraph->getNode(SVI->getOperand(0), this);

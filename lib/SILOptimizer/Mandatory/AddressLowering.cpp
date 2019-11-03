@@ -496,6 +496,7 @@ bool OpaqueStorageAllocation::canProjectFrom(SingleValueInstruction *innerVal,
     composingValue = cast<EnumInst>(composingUse);
     break;
   case SILInstructionKind::InitExistentialValueInst: {
+    composingUse->dump();
     // Ensure that all opened archetypes are available at the inner value's
     // definition.
     auto *initExistential = cast<InitExistentialValueInst>(composingUse);
