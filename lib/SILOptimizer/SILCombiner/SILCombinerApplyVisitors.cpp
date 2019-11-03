@@ -33,6 +33,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 
+#include <iostream>
+
 using namespace swift;
 using namespace swift::PatternMatch;
 
@@ -897,6 +899,7 @@ SILCombiner::buildConcreteOpenedExistentialInfoFromSoleConformingType(
     PD = WMI->getLookupProtocol();
   } else {
     auto ArgType = ArgOperand.get()->getType();
+    ArgType.dump();
     auto SwiftArgType = ArgType.getASTType();
     /// If the argtype is an opened existential conforming to a protocol type
     /// and that the protocol type has a sole conformance, then we can propagate
@@ -984,12 +987,16 @@ void SILCombiner::buildConcreteOpenedExistentialInfos(
     SILBuilderContext &BuilderCtx,
     SILOpenedArchetypesTracker &OpenedArchetypesTracker) {
   for (unsigned ArgIdx = 0; ArgIdx < Apply.getNumArguments(); ArgIdx++) {
+    Apply.getArgument(ArgIdx)->dump();
     auto ArgASTType = Apply.getArgument(ArgIdx)->getType().getASTType();
+    ArgASTType.dump();
+    std::cout << "has archtype: " << std::boolalpha << ArgASTType->hasArchetype() << std::endl;
     if (!ArgASTType->hasArchetype())
       continue;
 
     auto OptionalCOEI =
         buildConcreteOpenedExistentialInfo(Apply.getArgumentOperands()[ArgIdx]);
+    std::cout << "has coei: " << std::boolalpha << OptionalCOEI.hasValue() << std::endl;
     if (!OptionalCOEI.hasValue())
       continue;
     auto COEI = OptionalCOEI.getValue();
@@ -1332,6 +1339,8 @@ SILInstruction *SILCombiner::createApplyWithConcreteType(
 SILInstruction *
 SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite Apply,
                                                     WitnessMethodInst *WMI) {
+  Apply.dump();
+  
   // Check if it is legal to perform the propagation.
   if (WMI->getConformance().isConcrete())
     return nullptr;
@@ -1413,6 +1422,8 @@ SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite Apply,
 /// ==> apply %f<C : P>(%ref)
 SILInstruction *
 SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite Apply) {
+  Apply.dump();
+  
   // This optimization requires a generic argument.
   if (!Apply.hasSubstitutions())
     return nullptr;
@@ -1680,6 +1691,8 @@ SILInstruction *SILCombiner::visitApplyInst(ApplyInst *AI) {
   // propagate information about a concrete type from init_existential_addr or
   // init_existential_ref.
   if (isa<FunctionRefInst>(AI->getCallee())) {
+    AI->dump();
+    AI->getCallee()->dump();
     if (propagateConcreteTypeOfInitExistential(AI)) {
       return nullptr;
     }
