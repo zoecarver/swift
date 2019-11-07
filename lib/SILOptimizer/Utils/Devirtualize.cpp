@@ -1090,6 +1090,13 @@ ApplySite swift::tryDevirtualizeApply(ApplySite applySite,
                                       OptRemark::Emitter *ore) {
   LLVM_DEBUG(llvm::dbgs() << "    Trying to devirtualize: "
                           << *applySite.getInstruction());
+  
+  if (auto *upcast = dyn_cast<UpcastInst>(applySite.getArguments().front())) {
+    upcast->dump();
+    for (auto &type : upcast->getTypeDependentOperands()) {
+      type.get()->dump();
+    }
+  }
 
   // Devirtualize apply instructions that call witness_method instructions:
   //
@@ -1125,7 +1132,7 @@ ApplySite swift::tryDevirtualizeApply(ApplySite applySite,
     auto classType = getSelfInstanceType(instance->getType().getASTType());
     auto *cd = classType.getClassOrBoundGenericClass();
 
-    if (isEffectivelyFinalMethod(fas, classType, cd, cha))
+    if (isEffectivelyFinalMethod(fas, classType, cd, cha) || true)
       return tryDevirtualizeClassMethod(fas, instance, cd, ore,
                                         true /*isEffectivelyFinalMethod*/);
 

@@ -1332,6 +1332,8 @@ SILInstruction *SILCombiner::createApplyWithConcreteType(
 SILInstruction *
 SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite Apply,
                                                     WitnessMethodInst *WMI) {
+  Apply.dump();
+  
   // Check if it is legal to perform the propagation.
   if (WMI->getConformance().isConcrete())
     return nullptr;
