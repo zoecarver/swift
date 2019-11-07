@@ -1332,8 +1332,7 @@ SILInstruction *SILCombiner::createApplyWithConcreteType(
 SILInstruction *
 SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite Apply,
                                                     WitnessMethodInst *WMI) {
-  Apply.dump();
-  
+
   // Check if it is legal to perform the propagation.
   if (WMI->getConformance().isConcrete())
     return nullptr;
@@ -1399,6 +1398,107 @@ SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite Apply,
                              SelfConformance);
   }
 
+  /// Create the new apply instruction using concrete types for arguments.
+  return createApplyWithConcreteType(Apply, COEIs, BuilderCtx);
+}
+
+/// Rewrite a witness method's lookup type from an archetype to a concrete type.
+/// Example:
+///   %existential = alloc_stack $Protocol
+///   %value = init_existential_addr %existential : $Concrete
+///   copy_addr ... to %value
+///   %witness = witness_method $@opened
+///   apply %witness<T : Protocol>(%existential)
+///
+/// ==> apply %witness<Concrete : Protocol>(%existential)
+SILInstruction *
+SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite Apply,
+                                                    ClassMethodInst *classMethod) {
+  
+  // Try to derive the concrete type and the related conformance of self and
+  // other existential arguments by searching either for a preceding
+  // init_existential or looking up sole conforming type.
+  //
+  // buildConcreteOpenedExistentialInfo takes a SILBuilderContext because it may
+  // insert an uncheched cast to the concrete type, and it tracks the defintion
+  // of any opened archetype needed to use the concrete type.
+  SILBuilderContext BuilderCtx(Builder.getModule(), Builder.getTrackingList());
+  SILOpenedArchetypesTracker OpenedArchetypesTracker(&Builder.getFunction());
+  BuilderCtx.setOpenedArchetypesTracker(&OpenedArchetypesTracker);
+  llvm::SmallDenseMap<unsigned, ConcreteOpenedExistentialInfo> COEIs;
+  buildConcreteOpenedExistentialInfos(Apply, COEIs, BuilderCtx,
+                                      OpenedArchetypesTracker);
+
+  // Bail, if no argument has a concrete existential to propagate.
+  if (COEIs.empty())
+    return nullptr;
+
+  auto SelfCOEIIt =
+      COEIs.find(Apply.getCalleeArgIndex(Apply.getSelfArgumentOperand()));
+
+  // If no SelfCOEI is found, then just update the Apply with new COEIs for
+  // other arguments.
+//  if (SelfCOEIIt == COEIs.end())
+//    return createApplyWithConcreteType(Apply, COEIs, BuilderCtx);
+
+  auto &SelfCOEI = SelfCOEIIt->second;
+  assert(SelfCOEI.isValid());
+
+  const ConcreteExistentialInfo &SelfCEI = *SelfCOEI.CEI;
+  assert(SelfCEI.isValid());
+
+  // Get the conformance of the init_existential type, which is passed as the
+  // self argument, on the witness' protocol.
+//  ProtocolConformanceRef SelfConformance =
+//    SelfCEI.lookupExistentialConformance(classMethod->getMember().getDecl()
+//                                         ->getDeclContext()
+//                                         ->getSelfProtocolDecl());
+//
+//  auto lookupTy = classMethod->getMember().getDecl()->getInterfaceType();
+  
+  // Propagate the concrete type into a callee-operand, which is a
+  // witness_method instruction. It's ok to rewrite the witness method in terms
+  // of a concrete type without rewriting the apply itself. In fact, doing so
+  // may allow the Devirtualizer pass to finish the job.
+  //
+  // If we create a new instruction that’s the same as the old one we’ll
+  // cause an infinite loop:
+  // NewWMI will be added to the Builder’s tracker list.
+  // SILCombine, in turn, uses the tracker list to populate the worklist
+  // As such, if we don’t remove the witness method later on in the pass, we
+  // are stuck:
+  // We will re-create the same instruction and re-populate the worklist
+  // with it.
+  if (true) { // SelfCEI.ConcreteType != lookupTy
+
+  }
+  
+  auto foundIter = COEIs.find(0);
+  if (foundIter == COEIs.end()) return nullptr;
+  auto found = foundIter->second;
+  
+  SILBuilderWithScope classMethodBuilder(classMethod, BuilderCtx);
+  auto *newClassMethod =
+    classMethodBuilder.createClassMethod(classMethod->getLoc(),
+                                         found.OAI.ExistentialValue,
+//                                         classMethod->getOperand(),
+                                         classMethod->getMember(),
+                                         classMethod->getType());
+  newClassMethod->dump();
+  classMethod->replaceAllUsesWith(newClassMethod);
+  if (classMethod->use_empty())
+    eraseInstFromFunction(*classMethod);
+
+//  Apply.getOrigCalleeType().dump();
+  for (auto x : COEIs) {
+    x.getSecond().OAI.ExistentialValue->dump();
+    x.getSecond().CEI.getValue().ConcreteValue->dump();
+  }
+  
+  Apply.getCallee()->getType().dump();
+  Apply.dump();
+  SelfCEI.ConcreteType.dump();
+  
   /// Create the new apply instruction using concrete types for arguments.
   return createApplyWithConcreteType(Apply, COEIs, BuilderCtx);
 }
@@ -1619,6 +1719,17 @@ FullApplySite SILCombiner::rewriteApplyCallee(FullApplySite apply,
   }
 }
 
+static CanType
+getSelfInstanceType(CanType classOrMetatypeType) {
+  if (auto metaType = dyn_cast<MetatypeType>(classOrMetatypeType))
+    classOrMetatypeType = metaType.getInstanceType();
+
+  if (auto selfType = dyn_cast<DynamicSelfType>(classOrMetatypeType))
+    classOrMetatypeType = selfType.getSelfType();
+
+  return classOrMetatypeType;
+}
+
 SILInstruction *SILCombiner::visitApplyInst(ApplyInst *AI) {
   Builder.setCurrentDebugScope(AI->getDebugScope());
   // apply{partial_apply(x,y)}(z) -> apply(z,x,y) is triggered
@@ -1675,6 +1786,54 @@ SILInstruction *SILCombiner::visitApplyInst(ApplyInst *AI) {
   if (auto *WMI = dyn_cast<WitnessMethodInst>(AI->getCallee())) {
     if (propagateConcreteTypeOfInitExistential(AI, WMI)) {
       return nullptr;
+    }
+  }
+  
+  if (auto *classMethod = dyn_cast<ClassMethodInst>(AI->getCallee())) {
+    if (propagateConcreteTypeOfInitExistential(AI, classMethod)) {
+      return nullptr;
+    }
+    if (auto *upcast = dyn_cast<UpcastInst>(AI->getArguments().front())) {
+      if (auto *ref = dyn_cast<OpenExistentialRefInst>(upcast->getOperand())) {
+//        auto ty = ref->getType();
+//        ty.dump();
+//        auto archTy = ty.castTo<ArchetypeType>();
+//        archTy.dump();
+//
+//        auto concreteTy = AI->getFunction()->getLoweredType(archTy);
+//        concreteTy.dump();
+////        auto newVal = Builder.createUncheckedAddrCast(ref->getLoc(), ref, concreteTy.getAddressType());
+////        newVal->dump();
+//
+//        SubstitutionMap sm;
+//        auto conf = sm.lookupConformance(archTy,
+//          classMethod->getMember().getDecl()->getDeclContext()->getSelfProtocolDecl());
+//        conf.dump();
+////        classMethod->getMember().getDecl()->dump();
+////        auto classTy = classMethod->getMember().getDecl()->getInterfaceType();
+////        classTy.dump();
+//
+//        auto instance = stripUpCasts(classMethod->getOperand());
+//        auto classType = getSelfInstanceType(instance->getType().getASTType());
+////        classType->dump();
+////        auto *cd = classType.getClassOrBoundGenericClass();
+////        cd->dump();
+//
+//        auto decl = SILDeclRef(classMethod->getMember().getDecl());
+//        decl.dump();
+//
+//        Builder.setInsertionPoint(classMethod);
+//        auto witnessMethod = Builder.createWitnessMethod(classMethod->getLoc(),
+//                                                         classType,
+//                                                         ProtocolConformanceRef::forInvalid(),
+//                                                         decl,
+//                                                         classMethod->getType());
+//        witnessMethod->dump();
+//        ref->replaceAllUsesWith(newRef);
+//        newRef->dump();
+        
+        // TODO: create createUncheckedRefCast similar to SILCombinerApplyVisitorL942
+      }
     }
   }
 

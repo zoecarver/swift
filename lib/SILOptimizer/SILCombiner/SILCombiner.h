@@ -289,6 +289,10 @@ private:
   SILInstruction *
   propagateConcreteTypeOfInitExistential(FullApplySite Apply,
                                          WitnessMethodInst *WMI);
+      
+  SILInstruction *
+  propagateConcreteTypeOfInitExistential(FullApplySite Apply,
+                                         ClassMethodInst *WMI);
 
   SILInstruction *propagateConcreteTypeOfInitExistential(FullApplySite Apply);
 

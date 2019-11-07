@@ -214,6 +214,10 @@ OpenedArchetypeInfo::OpenedArchetypeInfo(Operand &use) {
       openedVal = stackInitVal;
     }
   }
+  if (auto *instance = dyn_cast<UpcastInst>(openedVal)) {
+    openedVal = instance->getOperand();
+    openedVal->dump();
+  }
   if (auto *Open = dyn_cast<OpenExistentialAddrInst>(openedVal)) {
     OpenedArchetype = Open->getType().castTo<ArchetypeType>();
     OpenedArchetypeValue = Open;
