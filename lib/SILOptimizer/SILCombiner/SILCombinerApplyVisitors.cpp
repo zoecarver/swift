@@ -1477,30 +1477,42 @@ SILCombiner::propagateConcreteTypeOfInitExistential(FullApplySite Apply,
   if (foundIter == COEIs.end()) return nullptr;
   auto found = foundIter->second;
   
-  SILBuilderWithScope classMethodBuilder(classMethod, BuilderCtx);
-  auto *newClassMethod =
-    classMethodBuilder.createClassMethod(classMethod->getLoc(),
-                                         found.OAI.ExistentialValue,
-//                                         classMethod->getOperand(),
-                                         classMethod->getMember(),
-                                         classMethod->getType());
-  newClassMethod->dump();
-  classMethod->replaceAllUsesWith(newClassMethod);
-  if (classMethod->use_empty())
-    eraseInstFromFunction(*classMethod);
-
-//  Apply.getOrigCalleeType().dump();
-  for (auto x : COEIs) {
-    x.getSecond().OAI.ExistentialValue->dump();
-    x.getSecond().CEI.getValue().ConcreteValue->dump();
-  }
+//  SILBuilderWithScope classMethodBuilder(classMethod, BuilderCtx);
+//  auto *newClassMethod =
+//    classMethodBuilder.createClassMethod(classMethod->getLoc(),
+//                                         found.OAI.ExistentialValue,
+////                                         classMethod->getOperand(),
+//                                         classMethod->getMember(),
+//                                         classMethod->getType());
+//  newClassMethod->dump();
+//  classMethod->replaceAllUsesWith(newClassMethod);
+//  if (classMethod->use_empty())
+//    eraseInstFromFunction(*classMethod);
+//
+////  Apply.getOrigCalleeType().dump();
+//  for (auto x : COEIs) {
+//    x.getSecond().OAI.ExistentialValue->dump();
+//    x.getSecond().CEI.getValue().ConcreteValue->dump();
+//  }
+//
+//  Apply.getCallee()->getType().dump();
+//  Apply.dump();
+//  SelfCEI.ConcreteType.dump();
+//
+//  /// Create the new apply instruction using concrete types for arguments.
+//  return createApplyWithConcreteType(Apply, COEIs, BuilderCtx);
   
-  Apply.getCallee()->getType().dump();
-  Apply.dump();
-  SelfCEI.ConcreteType.dump();
+  Builder.setInsertionPoint(classMethod);
   
-  /// Create the new apply instruction using concrete types for arguments.
-  return createApplyWithConcreteType(Apply, COEIs, BuilderCtx);
+  auto arg = found.CEI.getValue().ConcreteValue;
+  arg->dump();
+  
+  if (!arg->getType().is<ClassType>()) return nullptr;
+  
+  auto argTy = arg->getType().castTo<ClassType>();
+  argTy.dump();
+  
+  return nullptr;
 }
 
 /// Rewrite a protocol extension lookup type from an archetype to a concrete
