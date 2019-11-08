@@ -2307,6 +2307,11 @@ Type TypeResolver::resolveAttributedType(TypeAttributes &attrs,
     }
     attrs.clearAttribute(TAK_opened);
   }
+  
+  if (attrs.has(TAK_rvalue)) {
+    ty->setIsRValue(true);
+    attrs.clearAttribute(TAK_rvalue);
+  }
 
   // In SIL files *only*, permit @weak and @unowned to apply directly to types.
   if (attrs.hasOwnership()) {

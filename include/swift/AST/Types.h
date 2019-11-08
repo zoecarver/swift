@@ -305,14 +305,17 @@ protected:
   union { uint64_t OpaqueBits;
 
   SWIFT_INLINE_BITFIELD_BASE(TypeBase, bitmax(NumTypeKindBits,8) +
-                             RecursiveTypeProperties::BitWidth + 1,
+                             RecursiveTypeProperties::BitWidth + 2,
     /// Kind - The discriminator that indicates what subclass of type this is.
     Kind : bitmax(NumTypeKindBits,8),
 
     Properties : RecursiveTypeProperties::BitWidth,
 
     /// Whether this type is canonical or not.
-    IsCanonical : 1
+    IsCanonical : 1,
+                             
+   /// Wheather the type is an rvalue.
+   IsRValue : 1
   );
 
   SWIFT_INLINE_BITFIELD(ErrorType, TypeBase, 1,
@@ -420,6 +423,7 @@ protected:
     Bits.OpaqueBits = 0;
     Bits.TypeBase.Kind = static_cast<unsigned>(kind);
     Bits.TypeBase.IsCanonical = false;
+    Bits.TypeBase.IsRValue = false;
     // If this type is canonical, switch the CanonicalType union to ASTContext.
     if (CanTypeCtx) {
       Bits.TypeBase.IsCanonical = true;
@@ -439,6 +443,12 @@ public:
 
   /// isCanonical - Return true if this is a canonical type.
   bool isCanonical() const { return Bits.TypeBase.IsCanonical; }
+  
+  /// isRValue - Return true if this is an rvalue type.
+  bool isRValue() const { return Bits.TypeBase.IsRValue; }
+  
+  /// setIsRValue - Updates if this is an rvalue type.
+  void setIsRValue(bool newVal) { Bits.TypeBase.IsRValue = newVal; }
   
   /// hasCanonicalTypeComputed - Return true if we've already computed a
   /// canonical version of this type.

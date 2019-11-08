@@ -42,6 +42,8 @@
 #include "llvm/ADT/Twine.h"
 #include <algorithm>
 
+#include <iostream>
+
 using namespace swift;
 using namespace syntax;
 
@@ -1963,8 +1965,11 @@ bool Parser::parseTypeAttribute(TypeAttributes &Attributes, SourceLoc AtLoc,
     return true;
   }
   
+  std::cout << Tok.getText().str() << std::endl;
+  
   // Determine which attribute it is, and diagnose it if unknown.
   TypeAttrKind attr = TypeAttributes::getAttrKindFromString(Tok.getText());
+  std::cout << unsigned(attr) << std::endl;
 
   if (attr == TAK_Count) {
     if (justChecking) return true;
@@ -2086,6 +2091,9 @@ bool Parser::parseTypeAttribute(TypeAttributes &Attributes, SourceLoc AtLoc,
   case TAK_escaping:
   case TAK_noescape:
     break;
+  case TAK_rvalue:
+      Attributes.setAttr(attr, AtLoc);
+      return true;
 
   case TAK_out:
   case TAK_in:
