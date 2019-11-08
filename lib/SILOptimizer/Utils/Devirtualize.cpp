@@ -735,7 +735,6 @@ FullApplySite swift::devirtualizeClassMethod(FullApplySite applySite,
                                              SILValue classOrMetatype,
                                              ClassDecl *cd,
                                              OptRemark::Emitter *ore) {
-  assert(false);
   applySite.dump();
   
   LLVM_DEBUG(llvm::dbgs() << "    Trying to devirtualize : "
@@ -745,7 +744,6 @@ FullApplySite swift::devirtualizeClassMethod(FullApplySite applySite,
   auto *mi = cast<MethodInst>(applySite.getCallee());
 
   auto *f = getTargetClassMethod(module, cd, mi);
-
   CanSILFunctionType genCalleeType = f->getLoweredFunctionType();
 
   SubstitutionMap subs = getSubstitutionsForCallee(
@@ -821,8 +819,8 @@ FullApplySite swift::tryDevirtualizeClassMethod(FullApplySite applySite,
                                                 ClassDecl *cd,
                                                 OptRemark::Emitter *ore,
                                                 bool isEffectivelyFinalMethod) {
-  if (!canDevirtualizeClassMethod(applySite, cd, ore, isEffectivelyFinalMethod))
-    return FullApplySite();
+//  if (!canDevirtualizeClassMethod(applySite, cd, ore, isEffectivelyFinalMethod))
+//    return FullApplySite();
   auto newAI = devirtualizeClassMethod(applySite, classInstance, cd, ore);
   newAI.dump();
   return newAI;
@@ -1128,13 +1126,17 @@ ApplySite swift::tryDevirtualizeApply(ApplySite applySite,
   ///
   /// %YY = function_ref @...
   if (auto *cmi = dyn_cast<ClassMethodInst>(fas.getCallee())) {
+    cmi->dump();
     auto instance = stripUpCasts(cmi->getOperand());
     auto classType = getSelfInstanceType(instance->getType().getASTType());
     auto *cd = classType.getClassOrBoundGenericClass();
+    
+    return tryDevirtualizeClassMethod(fas, instance, cd, ore);
 
-    if (isEffectivelyFinalMethod(fas, classType, cd, cha))
-      return tryDevirtualizeClassMethod(fas, instance, cd, ore,
-                                        true /*isEffectivelyFinalMethod*/);
+    if (isEffectivelyFinalMethod(fas, classType, cd, cha)) {
+      auto x = tryDevirtualizeClassMethod(fas, instance, cd, ore, true /*isEffectivelyFinalMethod*/);
+      return x;
+    }
 
     // Try to check if the exact dynamic type of the instance is statically
     // known.
