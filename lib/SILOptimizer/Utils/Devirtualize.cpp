@@ -735,6 +735,9 @@ FullApplySite swift::devirtualizeClassMethod(FullApplySite applySite,
                                              SILValue classOrMetatype,
                                              ClassDecl *cd,
                                              OptRemark::Emitter *ore) {
+  assert(false);
+  applySite.dump();
+  
   LLVM_DEBUG(llvm::dbgs() << "    Trying to devirtualize : "
                           << *applySite.getInstruction());
 
@@ -756,6 +759,7 @@ FullApplySite swift::devirtualizeClassMethod(FullApplySite applySite,
   SILBuilderWithScope builder(applySite.getInstruction());
   SILLocation loc = applySite.getLoc();
   auto *fri = builder.createFunctionRefFor(loc, f);
+  fri->dump();
 
   // Create the argument list for the new apply, casting when needed
   // in order to handle covariant indirect return types and
@@ -797,6 +801,7 @@ FullApplySite swift::devirtualizeClassMethod(FullApplySite applySite,
                                      newArgs, substConv, newArgBorrows);
   FullApplySite newAI = FullApplySite::isa(newAS.getInstruction());
   assert(newAI);
+  newAI.dump();
 
   LLVM_DEBUG(llvm::dbgs() << "        SUCCESS: " << f->getName() << "\n");
   if (ore)
@@ -818,7 +823,9 @@ FullApplySite swift::tryDevirtualizeClassMethod(FullApplySite applySite,
                                                 bool isEffectivelyFinalMethod) {
   if (!canDevirtualizeClassMethod(applySite, cd, ore, isEffectivelyFinalMethod))
     return FullApplySite();
-  return devirtualizeClassMethod(applySite, classInstance, cd, ore);
+  auto newAI = devirtualizeClassMethod(applySite, classInstance, cd, ore);
+  newAI.dump();
+  return newAI;
 }
 
 //===----------------------------------------------------------------------===//

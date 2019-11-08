@@ -750,8 +750,9 @@ getCalleeFunction(SILFunction *F, FullApplySite AI, bool &IsThick,
 static SILInstruction *tryDevirtualizeApplyHelper(FullApplySite InnerAI,
                                                   ClassHierarchyAnalysis *CHA) {
   auto NewInst = tryDevirtualizeApply(InnerAI, CHA);
-  if (!NewInst)
+  if (!NewInst) {
     return InnerAI.getInstruction();
+  }
 
   deleteDevirtualizedApply(InnerAI);
 
@@ -761,6 +762,7 @@ static SILInstruction *tryDevirtualizeApplyHelper(FullApplySite InnerAI,
   auto newApplyAI = NewInst.getInstruction();
   assert(newApplyAI && "devirtualized but removed apply site?");
 
+  newApplyAI->dump();
   return newApplyAI;
 }
 
@@ -831,6 +833,8 @@ runOnFunctionRecursively(SILOptFunctionBuilder &FuncBuilder,
       // but a casted result of InnerAI or even a block argument due to
       // abstraction changes when calling the witness or class method.
       auto *devirtInst = tryDevirtualizeApplyHelper(InnerAI, CHA);
+      devirtInst->dump();
+      
       // Restore II to the current apply site.
       II = devirtInst->getReverseIterator();
       // If the devirtualized call result is no longer a invalid FullApplySite,
