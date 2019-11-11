@@ -2383,6 +2383,16 @@ parseClosureSignatureIfPresent(SmallVectorImpl<CaptureListEntry> &captureList,
 
       // Consume the ')', if it's there.
       if (consumeIf(tok::r_paren)) {
+        // If there are two tuples to unwrap
+        if (consumeIf(tok::comma) && consumeIf(tok::l_paren)) {
+          // While we don't have ')', eat balanced tokens.
+          while (!Tok.is(tok::r_paren) && !Tok.is(tok::eof))
+            skipSingle();
+          // Consume the ')' or error.
+          if (!consumeIf(tok::r_paren))
+            return false;
+        }
+        
         consumeIf(tok::kw_throws) || consumeIf(tok::kw_rethrows);
         // Parse the func-signature-result, if present.
         if (consumeIf(tok::arrow)) {
@@ -2556,6 +2566,41 @@ parseClosureSignatureIfPresent(SmallVectorImpl<CaptureListEntry> &captureList,
         params = pattern.get();
       else
         invalid = true;
+      
+      if (consumeIf(tok::comma)) {
+        pattern = parseSingleParameterClause(ParameterContextKind::Closure);
+        if (pattern.isNonNull()) {
+          auto firstParams = params->getArray();
+          auto secondParams = pattern.get()->getArray();
+          SmallVector<ParamDecl*, 8> newParamEls;
+          newParamEls.append(firstParams.begin(), firstParams.end());
+          newParamEls.append(secondParams.begin(), secondParams.end());
+          SmallVector<TupleTypeElt, 4> firstParamTupleTypes;
+          firstParamTupleTypes.reserve(firstParams.size());
+          std::transform(firstParams.begin(), firstParams.end(),
+                         firstParamTupleTypes.begin(),
+                         [](ParamDecl* param) -> TupleTypeElt {
+            TupleTypeElt(param->getType());
+          });
+          SmallVector<TupleTypeElt, 4> secondParamTupleTypes;
+          secondParamTupleTypes.reserve(secondParams.size());
+          std::transform(secondParams.begin(), secondParams.end(),
+                         secondParamTupleTypes.begin(),
+                         [](ParamDecl* param) -> TupleTypeElt {
+            TupleTypeElt(param->getType());
+          });
+          auto firstParamsTupleTy = TupleType::get(firstParamTupleTypes, Context);
+          auto secondParamsTupleTy = TupleType::get(secondParamTupleTypes, Context);
+          auto newFirstParam = ParamDecl::cloneWithoutType(Context,
+                                                           firstParams.front());
+          params = ParameterList::create(Context,
+                                         params->getStartLoc(),
+                                         newParamEls,
+                                         pattern.get()->getEndLoc());
+        } else {
+          invalid = true;
+        }
+      }
     } else {
       SyntaxParsingContext ClParamListCtx(SyntaxContext,
                                           SyntaxKind::ClosureParamList);
