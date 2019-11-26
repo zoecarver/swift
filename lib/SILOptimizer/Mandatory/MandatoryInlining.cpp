@@ -995,8 +995,6 @@ class MandatoryInlining : public SILModuleTransform {
       if (SILVerifyAll) {
         F.verify();
       }
-      
-//      invalidateAnalysis(&F, SILAnalysis::InvalidationKind::Everything);
     }
 
     // If there are any transparent functions that are deserialized from
