@@ -316,6 +316,7 @@ static bool isNonMutatingArraySemanticCall(SILInstruction *Inst) {
   case ArrayCallKind::kArrayUninitialized:
   case ArrayCallKind::kAppendContentsOf:
   case ArrayCallKind::kAppendElement:
+  case ArrayCallKind::kCopyToNewBuffer:
     return false;
   }
 

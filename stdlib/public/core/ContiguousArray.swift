@@ -675,6 +675,7 @@ extension ContiguousArray: RangeReplaceableCollection {
   /// new buffer is big enough to hold 'oldCount' + 1 elements.
   @inline(never)
   @inlinable // @specializable
+  @_semantics("array.copy_to_new_buffer")
   internal mutating func _copyToNewBuffer(oldCount: Int) {
     let newCount = oldCount + 1
     var newBuffer = _buffer._forceCreateUniqueMutableBuffer(

@@ -185,6 +185,7 @@ ArrayCallKind swift::ArraySemanticsCall::getKind() const {
                   ArrayCallKind::kWithUnsafeMutableBufferPointer)
             .Case("array.append_contentsOf", ArrayCallKind::kAppendContentsOf)
             .Case("array.append_element", ArrayCallKind::kAppendElement)
+            .Case("array.copy_to_new_buffer", ArrayCallKind::kCopyToNewBuffer)
             .Default(ArrayCallKind::kNone);
     if (Tmp != ArrayCallKind::kNone) {
       assert(Kind == ArrayCallKind::kNone && "Multiple array semantic "

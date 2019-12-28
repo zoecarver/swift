@@ -45,6 +45,8 @@ enum class WellKnownFunction {
   AllocateUninitializedArray,
   // Array.append(_:)
   ArrayAppendElement,
+  // Array._copyToNewBuffer(oldCount:)
+  ArrayCopyToNewBuffer,
   // String.init()
   StringInitEmpty,
   // String.init(_builtinStringLiteral:utf8CodeUnitCount:isASCII:)
@@ -69,6 +71,8 @@ static llvm::Optional<WellKnownFunction> classifyFunction(SILFunction *fn) {
     return WellKnownFunction::AllocateUninitializedArray;
   if (fn->hasSemanticsAttr(semantics::ARRAY_APPEND_ELEMENT))
     return WellKnownFunction::ArrayAppendElement;
+  if (fn->hasSemanticsAttr(semantics::ARRAY_COPY_TO_NEW_BUFFER))
+    return WellKnownFunction::ArrayCopyToNewBuffer;
   if (fn->hasSemanticsAttr(semantics::STRING_INIT_EMPTY))
     return WellKnownFunction::StringInitEmpty;
   // There are two string initializers in the standard library with the
@@ -931,6 +935,37 @@ ConstExprFunctionState::computeWellKnownCallResult(ApplyInst *apply,
                                               oldElements.end());
     newElements.push_back(element);
 
+    SymbolicValueAllocator &allocator = evaluator.getAllocator();
+    SymbolicValue newStorage = SymbolicValue::getSymbolicArrayStorage(
+        newElements, elementType, allocator);
+    SymbolicValue newArray = SymbolicValue::getArray(arrayValue.getArrayType(),
+                                                     newStorage, allocator);
+    computeFSStore(newArray, arrayAddress);
+    return None;
+  }
+  case WellKnownFunction::ArrayCopyToNewBuffer: {
+    // This function has the following signature in SIL:
+    //    (@in Int, @inout Array<Element>) -> ()
+    assert(conventions.getNumParameters() == 2 &&
+           conventions.getNumDirectSILResults() == 0 &&
+           conventions.getNumIndirectSILResults() == 0 &&
+           "unexpected Array._copyToNewBuffer(oldCount:) signature");
+    SILValue arrayAddress = apply->getOperand(2);
+    SymbolicValue arrayValue = getConstAddrAndLoadResult(arrayAddress);
+    if (!arrayValue.isConstant())
+      return arrayValue;
+    if (arrayValue.getKind() != SymbolicValue::Array) {
+      return getUnknown(evaluator, (SILInstruction *)apply,
+                        UnknownReason::InvalidOperandValue);
+    }
+    
+    SymbolicValue arrayStorage = arrayValue.getStorageOfArray();
+    CanType elementType;
+    auto oldElements = arrayStorage.getStoredElements(elementType);
+    SmallVector<SymbolicValue, 4> newElements(oldElements.begin(),
+                                              oldElements.end());
+    // Add an empty element to the array to increase its size
+    newElements.push_back(SymbolicValue::getMetatype(elementType));
     SymbolicValueAllocator &allocator = evaluator.getAllocator();
     SymbolicValue newStorage = SymbolicValue::getSymbolicArrayStorage(
         newElements, elementType, allocator);

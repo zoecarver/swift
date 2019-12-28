@@ -18,6 +18,7 @@
 #include "swift/SIL/CFG.h"
 #include "swift/SIL/DebugUtils.h"
 #include "swift/SIL/SILCloner.h"
+#include "swift/SIL/SILConstants.h"
 #include "swift/SIL/SILGlobalVariable.h"
 #include "swift/SIL/SILInstruction.h"
 #include "swift/SILOptimizer/Analysis/ColdBlockInfo.h"
@@ -25,6 +26,7 @@
 #include "swift/SILOptimizer/PassManager/Passes.h"
 #include "swift/SILOptimizer/PassManager/Transforms.h"
 #include "swift/SILOptimizer/Utils/BasicBlockOptUtils.h"
+#include "swift/SILOptimizer/Utils/ConstExpr.h"
 #include "swift/SILOptimizer/Utils/InstOptUtils.h"
 #include "swift/SILOptimizer/Utils/SILOptFunctionBuilder.h"
 #include "llvm/ADT/MapVector.h"
@@ -939,6 +941,14 @@ void SILGlobalOpt::optimizeGlobalAccess(SILGlobalVariable *SILG,
 
 bool SILGlobalOpt::run() {
   for (auto &F : *Module) {
+    SymbolicValueBumpAllocator allocator;
+    ConstExprStepEvaluator stepEvaluator(allocator, &F,
+                                         SILPassManager(Module)
+                                            .getOptions()
+                                            .AssertConfig,
+                                         /*trackCallees*/ true);
+    Optional<SILBasicBlock::iterator> nextInstOpt;
+    Optional<SymbolicValue> errorVal;
 
     // Don't optimize functions that are marked with the opt.never attribute.
     if (!F.shouldOptimize())
@@ -953,6 +963,16 @@ bool SILGlobalOpt::run() {
     ColdBlockInfo ColdBlocks(DA);
     for (auto &BB : F) {
       bool IsCold = ColdBlocks.isCold(&BB);
+      for (auto inst = BB.begin(); inst != BB.end(); ++inst) {
+        if (!F.getName().contains("test")) continue;
+        
+        auto val = stepEvaluator.evaluate(inst);
+//        if (val.first)
+//          inst = val.first.getValue();
+        if (val.second)
+          assert(true);
+      }
+
       for (auto &I : BB) {
         if (auto *BI = dyn_cast<BuiltinInst>(&I)) {
           collectOnceCall(BI);
