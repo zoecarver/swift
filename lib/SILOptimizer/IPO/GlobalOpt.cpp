@@ -963,14 +963,14 @@ bool SILGlobalOpt::run() {
     ColdBlockInfo ColdBlocks(DA);
     for (auto &BB : F) {
       bool IsCold = ColdBlocks.isCold(&BB);
+      SmallVector<SILBasicBlock::iterator, 128> instToEvaluate;
       for (auto inst = BB.begin(); inst != BB.end(); ++inst) {
         if (!F.getName().contains("test")) continue;
-        
-        auto val = stepEvaluator.evaluate(inst);
-//        if (val.first)
-//          inst = val.first.getValue();
-        if (val.second)
-          assert(true);
+        instToEvaluate.push_back(inst);
+      }
+      
+      for (auto &inst : instToEvaluate) {
+        stepEvaluator.evaluate(inst);
       }
 
       for (auto &I : BB) {

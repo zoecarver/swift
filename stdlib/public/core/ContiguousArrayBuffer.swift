@@ -254,6 +254,7 @@ internal struct _ContiguousArrayBuffer<Element>: _ArrayBufferProtocol {
   /// result's `.firstElementAddress` or set the result's `.count`
   /// to zero.
   @inlinable
+  @_semantics("contiguous_array_buffer_init")
   internal init(
     _uninitializedCount uninitializedCount: Int,
     minimumCapacity: Int

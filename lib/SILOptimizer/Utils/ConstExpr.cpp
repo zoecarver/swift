@@ -951,27 +951,51 @@ ConstExprFunctionState::computeWellKnownCallResult(ApplyInst *apply,
            conventions.getNumIndirectSILResults() == 0 &&
            "unexpected Array._copyToNewBuffer(oldCount:) signature");
     SILValue arrayAddress = apply->getOperand(2);
-    SymbolicValue arrayValue = getConstAddrAndLoadResult(arrayAddress);
-    if (!arrayValue.isConstant())
-      return arrayValue;
-    if (arrayValue.getKind() != SymbolicValue::Array) {
-      return getUnknown(evaluator, (SILInstruction *)apply,
-                        UnknownReason::InvalidOperandValue);
+    for (auto *use: arrayAddress->getUses()) {
+      auto store = dyn_cast<StoreInst>(use->getUser());
+      if (!store) continue;
+      
+      auto array = dyn_cast<StructInst>(store->getSrc());
+      if (!array) continue;
+      
+      auto buffer = dyn_cast<ApplyInst>(array->getElements().front());
+      if (!buffer ||
+          !buffer
+            ->getReferencedFunctionOrNull()
+            ->hasSemanticsAttr(semantics::CONTIGUOUS_ARRAY_BUFFER_INIT))
+        continue;
+      
+      auto sizeInt = dyn_cast<StructInst>(buffer->getOperand(2));
+      if (!sizeInt) continue;
+      auto size = dyn_cast<IntegerLiteralInst>(sizeInt->getElements().front());
+      if (!size) continue;
+      
+      SILBuilder builder(sizeInt);
+      auto dummyLoc = SILDebugLocation().getLocation();
+      auto sizeType = size->getType();
+      auto boolType = SILType::getBuiltinIntegerType(1, builder.getASTContext());
+      auto one = builder.createIntegerLiteral(dummyLoc,
+                                              sizeType, 1);
+      auto report = builder.createIntegerLiteral(dummyLoc,
+                                                 boolType, -1);
+      auto addReturnType = TupleType::get(
+        {TupleTypeElt(sizeType.getASTType()), TupleTypeElt(boolType.getASTType())},
+        builder.getASTContext());
+      auto addReturnSILType = SILType::getPrimitiveObjectType(CanType(addReturnType));
+      auto newSizeRes = builder.createBuiltinBinaryFunction(SILDebugLocation().getLocation(),
+                                                            "sadd_with_overflow",
+                                                            sizeType,
+                                                            addReturnSILType,
+                                                            {size, one, report});
+      auto newSize = builder.createTupleExtract(dummyLoc, newSizeRes, 0);
+      auto didOverflow = builder.createTupleExtract(dummyLoc, newSizeRes, 1);
+      builder.createCondFail(dummyLoc, didOverflow, "");
+      auto newSizeInt = builder.createStruct(dummyLoc, sizeInt->getType(), {newSize});
+      buffer->setOperand(2, newSizeInt);
+      apply->replaceAllUsesWithUndef();
+      apply->eraseFromParent();
     }
     
-    SymbolicValue arrayStorage = arrayValue.getStorageOfArray();
-    CanType elementType;
-    auto oldElements = arrayStorage.getStoredElements(elementType);
-    SmallVector<SymbolicValue, 4> newElements(oldElements.begin(),
-                                              oldElements.end());
-    // Add an empty element to the array to increase its size
-    newElements.push_back(SymbolicValue::getMetatype(elementType));
-    SymbolicValueAllocator &allocator = evaluator.getAllocator();
-    SymbolicValue newStorage = SymbolicValue::getSymbolicArrayStorage(
-        newElements, elementType, allocator);
-    SymbolicValue newArray = SymbolicValue::getArray(arrayValue.getArrayType(),
-                                                     newStorage, allocator);
-    computeFSStore(newArray, arrayAddress);
     return None;
   }
   case WellKnownFunction::StringInitEmpty: { // String.init()
