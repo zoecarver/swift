@@ -966,9 +966,11 @@ ConstExprFunctionState::computeWellKnownCallResult(ApplyInst *apply,
         continue;
       
       auto sizeInt = dyn_cast<StructInst>(buffer->getOperand(2));
-      if (!sizeInt) continue;
-      auto size = dyn_cast<IntegerLiteralInst>(sizeInt->getElements().front());
-      if (!size) continue;
+      if (!sizeInt)
+        continue;
+      if (sizeInt->getElements().empty())
+        continue;
+      auto size = sizeInt->getElements().front();
       
       SILBuilder builder(sizeInt);
       auto dummyLoc = SILDebugLocation().getLocation();
