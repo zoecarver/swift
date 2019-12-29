@@ -942,11 +942,9 @@ void SILGlobalOpt::optimizeGlobalAccess(SILGlobalVariable *SILG,
 bool SILGlobalOpt::run() {
   for (auto &F : *Module) {
     SymbolicValueBumpAllocator allocator;
-    ConstExprStepEvaluator stepEvaluator(allocator, &F,
-                                         SILPassManager(Module)
-                                            .getOptions()
-                                            .AssertConfig,
-                                         /*trackCallees*/ true);
+    ConstExprStepEvaluator stepEvaluator(
+        allocator, &F, SILPassManager(Module).getOptions().AssertConfig,
+        /*trackCallees*/ true);
     Optional<SILBasicBlock::iterator> nextInstOpt;
     Optional<SymbolicValue> errorVal;
 
@@ -965,10 +963,11 @@ bool SILGlobalOpt::run() {
       bool IsCold = ColdBlocks.isCold(&BB);
       SmallVector<SILBasicBlock::iterator, 128> instToEvaluate;
       for (auto inst = BB.begin(); inst != BB.end(); ++inst) {
-        if (!F.getName().contains("test")) continue;
+        if (!F.getName().contains("test"))
+          continue;
         instToEvaluate.push_back(inst);
       }
-      
+
       for (auto &inst : instToEvaluate) {
         stepEvaluator.evaluate(inst);
       }
