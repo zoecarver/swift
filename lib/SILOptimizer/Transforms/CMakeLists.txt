@@ -6,6 +6,7 @@ silopt_register_sources(
   AccessEnforcementWMO.cpp
   AllocBoxToStack.cpp
   ArrayCountPropagation.cpp
+  ArrayConstantFolding.cpp
   ArrayElementValuePropagation.cpp
   AssumeSingleThreaded.cpp
   CSE.cpp
