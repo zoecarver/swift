@@ -77,6 +77,7 @@ public:
   /// Base visitor that does not do anything.
   void visitSILInstruction(SILInstruction *) { }
   void visitApplyInst(ApplyInst *instruction);
+  void visitStructElementAddrInst(StructElementAddrInst *instruction);
 };
 
 } // end anonymous namespace
@@ -141,13 +142,59 @@ bool ArrayConstantFolder::runOnFunction(SILFunction &function) {
 
 void ArrayConstantFolder::visitApplyInst(ApplyInst *apply) {
   ArraySemanticsCall call(apply);
-  Array
   
   switch (call.getKind()) {
     case swift::ArrayCallKind::kAppendElement:
       
     default:
       break;
+  }
+}
+
+void ArrayConstantFolder::visitStructElementAddrInst(StructElementAddrInst *i) {
+  if (!i->getFunction()->getName().contains("test")) return;
+  if (i->getStructDecl()->getName().str().contains("_SwiftArrayBodyStorage")) {
+    if (i->getField()->getName().str().contains("_capacityAndFlags")) {
+      SmallVector<SymbolicValue, 1> results;
+      constantEvaluator.computeConstantValues({i}, results);
+      if (results.size()) {
+        auto val = results[0];
+        i->dump();
+        val.dump();
+        
+        SmallVector<unsigned, 4> accessPath;
+        auto *memoryObject = val.getAddressValue(accessPath);
+        
+        // If this is a derived address, then we are digging into an aggregate
+        // value.
+        auto objectVal = memoryObject->getValue();
+
+        // Try digging through the aggregate to get to our value.
+        unsigned idx = 0, end = accessPath.size();
+        while (idx != end && objectVal.getKind() == SymbolicValue::Aggregate) {
+          objectVal = objectVal.getAggregateMembers()[accessPath[idx]];
+          ++idx;
+        }
+
+        SILBuilder builder(i);
+        auto intVal = objectVal.getIntegerValue();
+        auto dummyLoc = SILDebugLocation().getLocation();
+        auto i64Ty =
+            SILType::getBuiltinIntegerType(64, builder.getASTContext());
+
+        for (auto *use : i->getUses()) {
+          auto user = use->getUser();
+          if (auto *sea = dyn_cast<StructElementAddrInst>(user)) {
+            auto valueToReplace = dyn_cast<LoadInst>(sea->getSingleUse()->getUser());
+            if (!valueToReplace) continue;
+            
+            auto replacementVal = builder.createIntegerLiteral(dummyLoc, i64Ty, intVal);
+            valueToReplace->replaceAllUsesWith(replacementVal);
+            instModCallbacks.deleteInst(valueToReplace);
+          }
+        }
+      }
+    }
   }
 }
 
@@ -163,6 +210,9 @@ struct ArrayConstantFolding : public SILFunctionTransform {
     ConstExprEvaluator constantEvaluator(allocator,
                                          getOptions().AssertConfig);
     ArrayConstantFolder folder(constantEvaluator);
+    if (folder.runOnFunction(*getFunction())) {
+      invalidateAnalysis(SILAnalysis::InvalidationKind::Instructions);
+    }
   }
 };
 

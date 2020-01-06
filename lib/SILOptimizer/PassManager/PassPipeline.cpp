@@ -259,6 +259,7 @@ void addHighLevelLoopOptPasses(SILPassPipelinePlan &P) {
   // Cleanup.
   P.addDCE();
   P.addSwiftArrayPropertyOpt();
+  P.addArrayConstantFolding();
 }
 
 // Perform classic SSA optimizations.
@@ -453,6 +454,8 @@ static bool addMidLevelPassPipeline(SILPassPipelinePlan &P) {
   // Run loop unrolling after inlining and constant propagation, because loop
   // trip counts may have became constant.
   P.addLoopUnroll();
+  
+  P.addArrayConstantFolding();
   return false;
 }
 

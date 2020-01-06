@@ -45,6 +45,8 @@ enum class WellKnownFunction {
   AllocateUninitializedArray,
   // Array.append(_:)
   ArrayAppendElement,
+  // _ContiguousArrayBuffer.init(_uninitializedCount:minimumCapacity:)
+  ContiguousArrayBufferInit,
   // String.init()
   StringInitEmpty,
   // String.init(_builtinStringLiteral:utf8CodeUnitCount:isASCII:)
@@ -69,6 +71,8 @@ static llvm::Optional<WellKnownFunction> classifyFunction(SILFunction *fn) {
     return WellKnownFunction::AllocateUninitializedArray;
   if (fn->hasSemanticsAttr(semantics::ARRAY_APPEND_ELEMENT))
     return WellKnownFunction::ArrayAppendElement;
+  if (fn->hasSemanticsAttr(semantics::CONTIGUOUS_ARRAY_BUFFER_INIT))
+    return WellKnownFunction::ContiguousArrayBufferInit;
   if (fn->hasSemanticsAttr(semantics::STRING_INIT_EMPTY))
     return WellKnownFunction::StringInitEmpty;
   // There are two string initializers in the standard library with the
@@ -348,10 +352,29 @@ SymbolicValue ConstExprFunctionState::computeConstantValue(SILValue value) {
         elts, substituteGenericParamsAndSimpify(structType),
         evaluator.getAllocator());
   }
-
+  
+  if (isa<UpcastInst>(value) || isa<RawPointerToRefInst>(value) ||
+      isa<AddressToPointerInst>(value)) {
+    auto inst = cast<SingleValueInstruction>(value);
+    auto subject = getConstantValue(inst->getOperand(0));
+    // Even if its not constant, return the subject
+    return subject;
+  }
+  
+  if (auto global = dyn_cast<GlobalAddrInst>(value)) {
+    if (global->getReferencedGlobal()->getName().contains("_swiftEmptyArrayStorage")) {
+      auto type = global->getReferencedGlobal()->getLoweredType().getASTType();
+      auto agg = SymbolicValue::getAggregate({ SymbolicValue::getInteger(0, 64),
+                                               SymbolicValue::getInteger(1, 64) },
+                                             type, evaluator.getAllocator());
+      return SymbolicValue::getAddress(SymbolicValueMemoryObject::create(type, agg, evaluator.getAllocator()));
+    }
+  }
+  
   // If this is a struct or tuple element addressor, compute a more derived
   // address.
-  if (isa<StructElementAddrInst>(value) || isa<TupleElementAddrInst>(value)) {
+  if (isa<StructElementAddrInst>(value) || isa<TupleElementAddrInst>(value) ||
+      isa<RefElementAddrInst>(value)) {
     auto inst = cast<SingleValueInstruction>(value);
     auto baseAddr = getConstantValue(inst->getOperand(0));
     if (!baseAddr.isConstant())
@@ -364,6 +387,8 @@ SymbolicValue ConstExprFunctionState::computeConstantValue(SILValue value) {
     unsigned index;
     if (auto sea = dyn_cast<StructElementAddrInst>(inst))
       index = sea->getFieldNo();
+    else if (auto rea = dyn_cast<RefElementAddrInst>(inst))
+      index = rea->getFieldNo();
     else
       index = cast<TupleElementAddrInst>(inst)->getFieldNo();
     accessPath.push_back(index);
@@ -939,6 +964,41 @@ ConstExprFunctionState::computeWellKnownCallResult(ApplyInst *apply,
     computeFSStore(newArray, arrayAddress);
     return None;
   }
+  case WellKnownFunction::ContiguousArrayBufferInit: {
+    // This function has this signature:
+    //   func _ContiguousArrayBuffer.init<Element>(_uninitializedCount:minimumCapacity:)
+    //     -> _ContiguousArrayBuffer<Element>
+    assert(conventions.getNumParameters() == 3 &&
+           conventions.getNumDirectSILResults() == 1 &&
+           conventions.getNumIndirectSILResults() == 0 &&
+           "unexpected _ContiguousArrayBuffer.init signature");
+
+    // Figure out the allocation size.
+    auto numElementsSV = getConstantValue(apply->getOperand(2));
+    if (!numElementsSV.isConstant())
+      return numElementsSV;
+    unsigned numElements = numElementsSV.getAggregateMembers()[0].getIntegerValue().getLimitedValue();
+    SmallVector<SymbolicValue, 8> elementConstants;
+    // Set array elements to uninitialized state. Subsequent stores through
+    // their addresses will initialize the elements.
+    elementConstants.assign(numElements, SymbolicValue::getUninitMemory());
+
+    auto resultType =
+        substituteGenericParamsAndSimpify(apply->getType().getASTType())
+        ->getAs<BoundGenericStructType>();
+    if (!resultType) return None;
+    auto arrayEltType = resultType->getGenericArgs()[0];
+    
+
+    // Create a SymbolicArrayStorage with \c elements and then create a
+    // SymbolicArray using it.
+    SymbolicValueAllocator &allocator = evaluator.getAllocator();
+    SymbolicValue arrayStorage = SymbolicValue::getSymbolicArrayStorage(
+        elementConstants, arrayEltType->getCanonicalType(), allocator);
+    
+    setValue(apply, arrayStorage);
+    return None;
+  }
   case WellKnownFunction::StringInitEmpty: { // String.init()
     assert(conventions.getNumDirectSILResults() == 1 &&
            conventions.getNumIndirectSILResults() == 0 &&
@@ -1313,7 +1373,8 @@ ConstExprFunctionState::initializeAddressFromSingleWriter(SILValue addr) {
     // Ignore markers, loads, and other things that aren't stores to this stack
     // value.
     if (isa<LoadInst>(user) || isa<DeallocStackInst>(user) ||
-        isa<DestroyAddrInst>(user) || isa<DebugValueAddrInst>(user))
+        isa<DestroyAddrInst>(user) || isa<DebugValueAddrInst>(user) ||
+        isa<IsUniqueInst>(user))
       continue;
 
     // TODO: Allow BeginAccess/EndAccess users.
@@ -1322,9 +1383,9 @@ ConstExprFunctionState::initializeAddressFromSingleWriter(SILValue addr) {
     if (auto *si = dyn_cast<StoreInst>(user)) {
       if (use->getOperandNumber() == 1) {
         // Forbid multiple assignment.
-        if (getMemoryValue().getKind() != SymbolicValue::UninitMemory)
-          return error(getUnknown(evaluator, addr,
-                                  UnknownReason::MutipleTopLevelWriters));
+//        if (getMemoryValue().getKind() != SymbolicValue::UninitMemory)
+//          return error(getUnknown(evaluator, addr,
+//                                  UnknownReason::MutipleTopLevelWriters));
 
         auto result = getConstantValue(si->getOperand(0));
         if (!result.isConstant())
@@ -1396,7 +1457,8 @@ ConstExprFunctionState::initializeAddressFromSingleWriter(SILValue addr) {
           getUnknown(evaluator, addr, UnknownReason::NotTopLevelConstant));
     }
 
-    if (auto *teai = dyn_cast<TupleElementAddrInst>(user)) {
+    if (isa<TupleElementAddrInst>(user) || isa<StructElementAddrInst>(user)) {
+      auto singleVal = cast<SingleValueInstruction>(user);
       // Try finding a writer among the users of `teai`. For example:
       //   %179 = alloc_stack $(Int32, Int32, Int32, Int32)
       //   %183 = tuple_element_addr %179 : $*(Int32, Int32, Int32, Int32), 3
@@ -1417,18 +1479,19 @@ ConstExprFunctionState::initializeAddressFromSingleWriter(SILValue addr) {
       // `initializeAddressFromSingleWriter` below detects and forbids multiple
       // assignment, so we don't need to do it here.
 
-      if (auto failure = initializeAddressFromSingleWriter(teai))
+      if (auto failure = initializeAddressFromSingleWriter(singleVal))
         return error(*failure);
 
       // If this instruction partially initialized the memory, then we must
       // remember to check later that the memory has been fully initialized.
-      if (getMemoryValue().getKind() != SymbolicValue::UninitMemory)
+      if (getMemoryValue().getKind() == SymbolicValue::Aggregate)
         mustCheckAggregateInitialized = true;
 
 #ifndef NDEBUG
       // If all aggregate elements are const, we have successfully
       // const-evaluated the entire tuple!
-      if (checkAggregateInitialized())
+      if (getMemoryValue().getKind() == SymbolicValue::Aggregate &&
+          checkAggregateInitialized())
         LLVM_DEBUG(llvm::dbgs() << "Const-evaluated the entire tuple: ";
                    getMemoryValue().dump());
 #endif // NDEBUG
