@@ -140,18 +140,32 @@ class ConstExprFunctionState {
   /// If a SILValue is not bound to a SymbolicValue in the calculatedValues,
   /// try to compute it recursively by visiting its defining instruction.
   bool recursivelyComputeValueIfNotInState = false;
+  
+  /// A SILInstruction to keep track of the current position in the given function we are analyzing. This helps
+  /// the constant evaluator to be able to pick which value should be returned when there are, for example,
+  /// multiple store instructions. This value *cannot* change durning the lifetime of this object.
+  SILInstruction *currentInstruction;
 
 public:
   ConstExprFunctionState(ConstExprEvaluator &evaluator, SILFunction *fn,
                          SubstitutionMap substitutionMap,
                          unsigned &numInstEvaluated,
-                         bool enableTopLevelEvaluation)
+                         bool enableTopLevelEvaluation,
+                         SILInstruction *currentInstruction = nullptr)
       : evaluator(evaluator), fn(fn), substitutionMap(substitutionMap),
         numInstEvaluated(numInstEvaluated),
-        recursivelyComputeValueIfNotInState(enableTopLevelEvaluation) {
+        recursivelyComputeValueIfNotInState(enableTopLevelEvaluation),
+        currentInstruction(currentInstruction) {
     assert((!fn || !enableTopLevelEvaluation) &&
            "top-level evaluation must be disabled when evaluating a function"
            " body step by step");
+  }
+
+  void setCurrentInstruction(SILInstruction *newInst) {
+    if (currentInstruction) {
+      assert(currentInstruction->getFunction() == newInst->getFunction());
+    }
+    currentInstruction = newInst;
   }
 
   /// Pretty print the state to stderr.
@@ -371,10 +385,17 @@ SymbolicValue ConstExprFunctionState::computeConstantValue(SILValue value) {
     }
   }
   
+  if (auto *refElementAddr = dyn_cast<RefElementAddrInst>(value)) {
+    auto element = getConstantValue(refElementAddr->getOperand());
+    auto *memObject = SymbolicValueMemoryObject::create(
+      refElementAddr->getType().getASTType(),
+      element, evaluator.getAllocator());
+    return SymbolicValue::getAddress(memObject);
+  }
+  
   // If this is a struct or tuple element addressor, compute a more derived
   // address.
-  if (isa<StructElementAddrInst>(value) || isa<TupleElementAddrInst>(value) ||
-      isa<RefElementAddrInst>(value)) {
+  if (isa<StructElementAddrInst>(value) || isa<TupleElementAddrInst>(value)) {
     auto inst = cast<SingleValueInstruction>(value);
     auto baseAddr = getConstantValue(inst->getOperand(0));
     if (!baseAddr.isConstant())
@@ -637,6 +658,8 @@ ConstExprFunctionState::computeConstantValueBuiltin(BuiltinInst *inst) {
       }
       return operand;
     }
+    case BuiltinValueKind::AssumeNonNegative:
+      return operand;
     }
   }
 
@@ -974,10 +997,17 @@ ConstExprFunctionState::computeWellKnownCallResult(ApplyInst *apply,
            "unexpected _ContiguousArrayBuffer.init signature");
 
     // Figure out the allocation size.
-    auto numElementsSV = getConstantValue(apply->getOperand(2));
-    if (!numElementsSV.isConstant())
-      return numElementsSV;
-    unsigned numElements = numElementsSV.getAggregateMembers()[0].getIntegerValue().getLimitedValue();
+    auto minCapSV = getConstantValue(apply->getOperand(2));
+    if (!minCapSV.isConstant())
+      return minCapSV;
+    auto uninitCountSV = getConstantValue(apply->getOperand(1));
+    if (!uninitCountSV.isConstant())
+      return uninitCountSV;
+    
+    minCapSV.dump();
+    uninitCountSV.dump();
+    
+    unsigned numElements = minCapSV.getAggregateMembers()[0].getIntegerValue().getLimitedValue();
     SmallVector<SymbolicValue, 8> elementConstants;
     // Set array elements to uninitialized state. Subsequent stores through
     // their addresses will initialize the elements.
@@ -996,7 +1026,19 @@ ConstExprFunctionState::computeWellKnownCallResult(ApplyInst *apply,
     SymbolicValue arrayStorage = SymbolicValue::getSymbolicArrayStorage(
         elementConstants, arrayEltType->getCanonicalType(), allocator);
     
-    setValue(apply, arrayStorage);
+    auto memObj = SymbolicValueMemoryObject::create(arrayEltType,
+                                                    arrayStorage, allocator);
+    SymbolicValue addr = SymbolicValue::getAddress(memObj);
+    
+    SymbolicValue nativeTypeChecked = SymbolicValue::getInteger(0, 1);
+    SymbolicValue owner = SymbolicValue::getAggregate({}, arrayEltType, allocator);
+    SymbolicValue nativeOwner = SymbolicValue::getAggregate({}, arrayEltType, allocator);
+    
+    SymbolicValue buffer = SymbolicValue::getAggregate(
+    {nativeTypeChecked, addr, addr, uninitCountSV, minCapSV, owner, nativeOwner},
+                                                       apply->getType().getASTType(),
+                                                       allocator);
+    setValue(apply, buffer);
     return None;
   }
   case WellKnownFunction::StringInitEmpty: { // String.init()
@@ -1367,9 +1409,16 @@ ConstExprFunctionState::initializeAddressFromSingleWriter(SILValue addr) {
   // something else we can't handle.
   // We must iterate over all uses, to make sure there is a single initializer.
   // The only permitted early exit is when we know for sure that we have failed.
-  for (auto *use : addr->getUses()) {
+  DominanceInfo domInfo(addr->getFunction());
+  SmallVector<Operand *, 8> orderedUsers(addr->use_begin(), addr->use_end());
+  std::sort(orderedUsers.begin(), orderedUsers.end(),
+            [&domInfo](Operand *a, Operand *b) {
+    return domInfo.dominates(a->getUser(), b->getUser());
+  });
+  
+  for (auto *use : orderedUsers) {
     auto user = use->getUser();
-
+    
     // Ignore markers, loads, and other things that aren't stores to this stack
     // value.
     if (isa<LoadInst>(user) || isa<DeallocStackInst>(user) ||
@@ -1378,20 +1427,47 @@ ConstExprFunctionState::initializeAddressFromSingleWriter(SILValue addr) {
       continue;
 
     // TODO: Allow BeginAccess/EndAccess users.
+    
+    auto dominates = [](auto a, auto b) -> bool {
+      auto func = a->getParent();
+
+      // We just check whether B comes after A.
+      // This is a non-strict computation.
+      auto aIter = a->getIterator();
+      auto bIter = b->getIterator();
+      auto fIter = func->begin();
+      while (bIter != fIter) {
+        --bIter;
+        if (aIter == bIter)
+          return true;
+      }
+
+      return false;
+    };
 
     // If this is a store *to* the memory, analyze the input value.
     if (auto *si = dyn_cast<StoreInst>(user)) {
       if (use->getOperandNumber() == 1) {
-        // Forbid multiple assignment.
-//        if (getMemoryValue().getKind() != SymbolicValue::UninitMemory)
-//          return error(getUnknown(evaluator, addr,
-//                                  UnknownReason::MutipleTopLevelWriters));
+        // Unless we know our location, forbid multiple assignments.
+        if (currentInstruction == nullptr &&
+            getMemoryValue().getKind() != SymbolicValue::UninitMemory)
+          return error(getUnknown(evaluator, addr,
+                                  UnknownReason::MutipleTopLevelWriters));
 
-        auto result = getConstantValue(si->getOperand(0));
-        if (!result.isConstant())
-          return error(result);
-        setMemoryValue(result);
-        continue;
+        // Make sure the store dominates the addr instruction.
+        // Current comes after store.
+        if (currentInstruction == nullptr ||
+            dominates(si->getParent(), currentInstruction->getParent())) {
+          auto result = getConstantValue(si->getOperand(0));
+          if (!result.isConstant())
+            return error(result);
+          setMemoryValue(result);
+          continue;
+        } else {
+          // If the store doesn't dominate the addr, then we don't want to
+          // record it because we already have our value.
+          continue;
+        }
       }
     }
 
@@ -1615,7 +1691,7 @@ SymbolicValue ConstExprFunctionState::loadAddrValue(SILValue addr,
     return objectVal;
 
   // If the memory object had a reason, return it.
-  if (objectVal.isUnknown())
+  if (objectVal.isUnknown() || objectVal.getKind() == SymbolicValue::Address)
     return objectVal;
 
   // Otherwise, return a generic failure.
@@ -2016,6 +2092,7 @@ void ConstExprEvaluator::computeConstantValues(
                                numInstEvaluated,
                                /*enableTopLevelEvaluation*/ true);
   for (auto v : values) {
+    state.setCurrentInstruction(v->getDefiningInstruction());
     auto symVal = state.getConstantValue(v);
     results.push_back(symVal);
 

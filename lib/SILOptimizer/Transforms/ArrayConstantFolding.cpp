@@ -73,6 +73,10 @@ public:
   ///
   /// \return whether a change was made.
   bool runOnFunction(SILFunction &function);
+      
+  Optional<SymbolicValue> computeProperty(unsigned idx, SILValue i);
+  bool tryReplaceIntegerLoadWith(SymbolicValue constant,
+                                 SingleValueInstruction *i);
 
   /// Base visitor that does not do anything.
   void visitSILInstruction(SILInstruction *) { }
@@ -151,49 +155,102 @@ void ArrayConstantFolder::visitApplyInst(ApplyInst *apply) {
   }
 }
 
+static SymbolicValue recursivelyLoad(SymbolicValue val) {
+  SmallVector<unsigned, 4> accessPath;
+  auto *memoryObject = val.getAddressValue(accessPath);
+  
+  // If this is a derived address, then we are digging into an aggregate
+  // value.
+  auto objectVal = memoryObject->getValue();
+  
+  if (objectVal.getKind() == SymbolicValue::Address)
+    objectVal = recursivelyLoad(objectVal);
+
+  // Try digging through the aggregate to get to our value.
+  unsigned idx = 0, end = accessPath.size();
+  while (idx != end && objectVal.getKind() == SymbolicValue::Aggregate) {
+    objectVal = objectVal.getAggregateMembers()[accessPath[idx]];
+    ++idx;
+  }
+  
+  return objectVal;
+}
+
+static SymbolicValue recursivelyLoad(unsigned idx, SymbolicValue val) {
+  SmallVector<unsigned, 4> accessPath;
+  auto *memoryObject = val.getAddressValue(accessPath);
+  
+  // If this is a derived address, then we are digging into an aggregate
+  // value.
+  auto objectVal = memoryObject->getValue();
+  
+  if (objectVal.getKind() == SymbolicValue::Address)
+    objectVal = recursivelyLoad(objectVal);
+
+  // Try digging through the aggregate to get to our value.
+  while (objectVal.getKind() == SymbolicValue::Aggregate) {
+    objectVal = objectVal.getAggregateMembers()[accessPath[idx]];
+  }
+  
+  return objectVal;
+}
+
+Optional<SymbolicValue>
+ArrayConstantFolder::computeProperty(unsigned idx, SILValue i) {
+  SmallVector<SymbolicValue, 1> results;
+  constantEvaluator.computeConstantValues({i}, results);
+  if (results.size()) {
+    auto val = results[0];
+    i->dump();
+    val.dump();
+    
+    if (val.getKind() != SymbolicValue::Address)
+      return None;
+    
+    return recursivelyLoad(idx, val);
+  }
+  return None;
+}
+
+bool ArrayConstantFolder::tryReplaceIntegerLoadWith(SymbolicValue constant,
+                                                    SingleValueInstruction *i) {
+  SILBuilder builder(i);
+  auto intVal = constant.getIntegerValue();
+  auto dummyLoc = SILDebugLocation().getLocation();
+  auto i64Ty = SILType::getBuiltinIntegerType(64, builder.getASTContext());
+  
+  llvm::errs() << "int value = " << intVal << "\n";
+
+  for (auto *use : i->getUses()) {
+    auto user = use->getUser();
+    if (auto *sea = dyn_cast<StructElementAddrInst>(user)) {
+      auto valueToReplace = dyn_cast<LoadInst>(sea->getSingleUse()->getUser());
+      if (!valueToReplace) continue;
+      
+      auto replacementVal = builder.createIntegerLiteral(dummyLoc, i64Ty, intVal);
+      valueToReplace->replaceAllUsesWith(replacementVal);
+      instModCallbacks.deleteInst(valueToReplace);
+      return true;
+    }
+  }
+  
+  return false;
+}
+
 void ArrayConstantFolder::visitStructElementAddrInst(StructElementAddrInst *i) {
   if (!i->getFunction()->getName().contains("test")) return;
   if (i->getStructDecl()->getName().str().contains("_SwiftArrayBodyStorage")) {
+    if (i->getField()->getName().str().contains("count")) {
+      auto val = computeProperty(0, i);
+      if (!val) return;
+      auto objectVal = val.getValue();
+      tryReplaceIntegerLoadWith(objectVal, i);
+    }
     if (i->getField()->getName().str().contains("_capacityAndFlags")) {
-      SmallVector<SymbolicValue, 1> results;
-      constantEvaluator.computeConstantValues({i}, results);
-      if (results.size()) {
-        auto val = results[0];
-        i->dump();
-        val.dump();
-        
-        SmallVector<unsigned, 4> accessPath;
-        auto *memoryObject = val.getAddressValue(accessPath);
-        
-        // If this is a derived address, then we are digging into an aggregate
-        // value.
-        auto objectVal = memoryObject->getValue();
-
-        // Try digging through the aggregate to get to our value.
-        unsigned idx = 0, end = accessPath.size();
-        while (idx != end && objectVal.getKind() == SymbolicValue::Aggregate) {
-          objectVal = objectVal.getAggregateMembers()[accessPath[idx]];
-          ++idx;
-        }
-
-        SILBuilder builder(i);
-        auto intVal = objectVal.getIntegerValue();
-        auto dummyLoc = SILDebugLocation().getLocation();
-        auto i64Ty =
-            SILType::getBuiltinIntegerType(64, builder.getASTContext());
-
-        for (auto *use : i->getUses()) {
-          auto user = use->getUser();
-          if (auto *sea = dyn_cast<StructElementAddrInst>(user)) {
-            auto valueToReplace = dyn_cast<LoadInst>(sea->getSingleUse()->getUser());
-            if (!valueToReplace) continue;
-            
-            auto replacementVal = builder.createIntegerLiteral(dummyLoc, i64Ty, intVal);
-            valueToReplace->replaceAllUsesWith(replacementVal);
-            instModCallbacks.deleteInst(valueToReplace);
-          }
-        }
-      }
+      auto val = computeProperty(1, i);
+      if (!val) return;
+      auto objectVal = val.getValue();
+      tryReplaceIntegerLoadWith(objectVal, i);
     }
   }
 }
