@@ -169,29 +169,11 @@ static SymbolicValue recursivelyLoad(SymbolicValue val) {
   // Try digging through the aggregate to get to our value.
   unsigned idx = 0, end = accessPath.size();
   while (idx != end && objectVal.getKind() == SymbolicValue::Aggregate) {
-    objectVal = objectVal.getAggregateMembers()[accessPath[idx]];
+    objectVal = objectVal.getAggregateMembers()[0]; // accessPath[idx]
+    objectVal.dump();
     ++idx;
   }
-  
-  return objectVal;
-}
 
-static SymbolicValue recursivelyLoad(unsigned idx, SymbolicValue val) {
-  SmallVector<unsigned, 4> accessPath;
-  auto *memoryObject = val.getAddressValue(accessPath);
-  
-  // If this is a derived address, then we are digging into an aggregate
-  // value.
-  auto objectVal = memoryObject->getValue();
-  
-  if (objectVal.getKind() == SymbolicValue::Address)
-    objectVal = recursivelyLoad(objectVal);
-
-  // Try digging through the aggregate to get to our value.
-  while (objectVal.getKind() == SymbolicValue::Aggregate) {
-    objectVal = objectVal.getAggregateMembers()[accessPath[idx]];
-  }
-  
   return objectVal;
 }
 
@@ -204,10 +186,25 @@ ArrayConstantFolder::computeProperty(unsigned idx, SILValue i) {
     i->dump();
     val.dump();
     
-    if (val.getKind() != SymbolicValue::Address)
-      return None;
+    return recursivelyLoad(val);
     
-    return recursivelyLoad(idx, val);
+//    if (val.getKind() != SymbolicValue::Address)
+//      return None;
+//
+//    val = recursivelyLoad(val);
+//
+//    return val.getAggregateMembers()[idx];
+//
+//    if (val.getKind() != SymbolicValue::Address)
+//      return val;
+//
+//    SmallVector<unsigned, 4> accessPath;
+//    auto *memoryObject = val.getAddressValue(accessPath);
+//
+//    accessPath.push_back(idx);
+//    auto objectVal = SymbolicValue::getAddress(memoryObject, accessPath,
+//                                               constantEvaluator.getAllocator());
+//    return recursivelyLoad(objectVal);
   }
   return None;
 }
@@ -244,12 +241,20 @@ void ArrayConstantFolder::visitStructElementAddrInst(StructElementAddrInst *i) {
       auto val = computeProperty(0, i);
       if (!val) return;
       auto objectVal = val.getValue();
+      if (objectVal.getKind() == SymbolicValue::Aggregate) {
+        objectVal = objectVal.getAggregateMembers()[0];
+        objectVal = objectVal.getAggregateMembers()[0];
+      }
       tryReplaceIntegerLoadWith(objectVal, i);
     }
     if (i->getField()->getName().str().contains("_capacityAndFlags")) {
-      auto val = computeProperty(1, i);
+      auto val = computeProperty(0, i);
       if (!val) return;
       auto objectVal = val.getValue();
+      if (objectVal.getKind() == SymbolicValue::Aggregate) {
+        objectVal = objectVal.getAggregateMembers()[1];
+        objectVal = objectVal.getAggregateMembers()[0];
+      }
       tryReplaceIntegerLoadWith(objectVal, i);
     }
   }

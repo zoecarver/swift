@@ -377,22 +377,26 @@ SymbolicValue ConstExprFunctionState::computeConstantValue(SILValue value) {
   
   if (auto global = dyn_cast<GlobalAddrInst>(value)) {
     if (global->getReferencedGlobal()->getName().contains("_swiftEmptyArrayStorage")) {
+      auto &allocator = evaluator.getAllocator();
       auto type = global->getReferencedGlobal()->getLoweredType().getASTType();
-      auto agg = SymbolicValue::getAggregate({ SymbolicValue::getInteger(0, 64),
-                                               SymbolicValue::getInteger(1, 64) },
+      auto intTy = type->getStructOrBoundGenericStruct()->getStoredProperties()[0]->getType();
+      auto zeroInt = SymbolicValue::getAggregate({ SymbolicValue::getInteger(0, 64) },
+                                                 intTy, allocator);
+      auto oneInt = SymbolicValue::getAggregate({ SymbolicValue::getInteger(1, 64) },
+                                                 intTy, allocator);
+      auto agg = SymbolicValue::getAggregate({ zeroInt, oneInt },
                                              type, evaluator.getAllocator());
-      return SymbolicValue::getAddress(SymbolicValueMemoryObject::create(type, agg, evaluator.getAllocator()));
+      return SymbolicValue::getAddress(SymbolicValueMemoryObject::create(type, agg, allocator));
     }
   }
   
-  if (auto *refElementAddr = dyn_cast<RefElementAddrInst>(value)) {
-    auto element = getConstantValue(refElementAddr->getOperand());
-    auto *memObject = SymbolicValueMemoryObject::create(
-      refElementAddr->getType().getASTType(),
-      element, evaluator.getAllocator());
+  if (auto *rea = dyn_cast<RefElementAddrInst>(value)) {
+    auto element = getConstantValue(rea->getOperand());
+    auto *memObject = SymbolicValueMemoryObject::create(rea->getOperand()->getType().getASTType(),
+                                                        element, evaluator.getAllocator());
     return SymbolicValue::getAddress(memObject);
   }
-  
+
   // If this is a struct or tuple element addressor, compute a more derived
   // address.
   if (isa<StructElementAddrInst>(value) || isa<TupleElementAddrInst>(value)) {
@@ -406,15 +410,25 @@ SymbolicValue ConstExprFunctionState::computeConstantValue(SILValue value) {
 
     // Add our index onto the next of the list.
     unsigned index;
-    if (auto sea = dyn_cast<StructElementAddrInst>(inst))
+    if (auto sea = dyn_cast<StructElementAddrInst>(inst)) {
+//      std::for_each(sea->getStructDecl()->getStoredProperties().begin(),
+//                    sea->getStructDecl()->getStoredProperties().end(),
+//                    [](auto a) { a->dump(); });
       index = sea->getFieldNo();
-    else if (auto rea = dyn_cast<RefElementAddrInst>(inst))
+    } else if (auto rea = dyn_cast<RefElementAddrInst>(inst))
       index = rea->getFieldNo();
     else
       index = cast<TupleElementAddrInst>(inst)->getFieldNo();
     accessPath.push_back(index);
-    return SymbolicValue::getAddress(memObject, accessPath,
-                                     evaluator.getAllocator());
+    
+    llvm::errs() << "index = " << index << "\n";
+    llvm::errs() << "address: ";
+    auto addr = SymbolicValue::getAddress(memObject, accessPath,
+                                          evaluator.getAllocator());
+    addr.dump();
+    llvm::errs() << "instruction: ";
+    inst->dump();
+    return addr;
   }
 
   // If this is a load, then we either have computed the value of the memory
@@ -1026,17 +1040,41 @@ ConstExprFunctionState::computeWellKnownCallResult(ApplyInst *apply,
     SymbolicValue arrayStorage = SymbolicValue::getSymbolicArrayStorage(
         elementConstants, arrayEltType->getCanonicalType(), allocator);
     
+//    auto intType = resultType
+//      ->getStructOrBoundGenericStruct()
+//      ->getStoredProperties()[3]
+//      ->getType();
+    
     auto memObj = SymbolicValueMemoryObject::create(arrayEltType,
                                                     arrayStorage, allocator);
     SymbolicValue addr = SymbolicValue::getAddress(memObj);
+//    auto *countMemObj = SymbolicValueMemoryObject::create(intType,
+//                                                                  uninitCountSV,
+//                                                                  allocator);
+//    SymbolicValue count = SymbolicValue::getAddress(countMemObj);
+//    auto *minCapMemObj = SymbolicValueMemoryObject::create(intType,
+//                                                                  minCapSV,
+//                                                                  allocator);
+//    SymbolicValue minCap = SymbolicValue::getAddress(minCapMemObj);
     
-    SymbolicValue nativeTypeChecked = SymbolicValue::getInteger(0, 1);
-    SymbolicValue owner = SymbolicValue::getAggregate({}, arrayEltType, allocator);
-    SymbolicValue nativeOwner = SymbolicValue::getAggregate({}, arrayEltType, allocator);
+//    SymbolicValue nativeTypeChecked = SymbolicValue::getInteger(0, 1);
+//    SymbolicValue owner = SymbolicValue::getAggregate({}, arrayEltType, allocator);
+//    SymbolicValue nativeOwner = SymbolicValue::getAggregate({}, arrayEltType, allocator);
+
+    auto bufferTy = apply->getType().getASTType(); // _ContiguousArrayBuffer
+    auto *bufferDecl = apply->getType().getStructOrBoundGenericStruct(); // _ContiguousArrayBuffer
+    auto storageTy = bufferDecl->getStoredProperties()[0]->getType(); // __ContiguousArrayStorageBase
+    auto arrayBodyTy = storageTy->getClassOrBoundGenericClass()->getStoredProperties()[0]->getType(); // _ArrayBody
+    auto arrayBodyStorageTy = arrayBodyTy->getStructOrBoundGenericStruct()->getStoredProperties()[0]->getType(); // _SwiftArrayBodyStorage
     
-    SymbolicValue buffer = SymbolicValue::getAggregate(
-    {nativeTypeChecked, addr, addr, uninitCountSV, minCapSV, owner, nativeOwner},
-                                                       apply->getType().getASTType(),
+    SymbolicValue arrayBodyStorage = SymbolicValue::getAggregate({uninitCountSV, minCapSV},
+                                                                 arrayBodyStorageTy, allocator);
+    SymbolicValue capacityAndStorage = SymbolicValue::getAggregate({arrayBodyStorage},
+                                                          arrayBodyTy, allocator);
+    SymbolicValue storage = SymbolicValue::getAggregate({capacityAndStorage}, storageTy,
+                                                        allocator);
+    SymbolicValue buffer = SymbolicValue::getAggregate({storage},
+                                                       bufferTy,
                                                        allocator);
     setValue(apply, buffer);
     return None;
