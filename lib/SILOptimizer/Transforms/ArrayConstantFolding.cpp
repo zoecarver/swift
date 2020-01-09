@@ -225,6 +225,7 @@ bool ArrayConstantFolder::tryReplaceIntegerLoadWith(SymbolicValue constant,
       if (!valueToReplace) continue;
       
       auto replacementVal = builder.createIntegerLiteral(dummyLoc, i64Ty, intVal);
+      replacementVal->dump();
       valueToReplace->replaceAllUsesWith(replacementVal);
       instModCallbacks.deleteInst(valueToReplace);
       return true;
@@ -242,7 +243,7 @@ void ArrayConstantFolder::visitStructElementAddrInst(StructElementAddrInst *i) {
       if (!val) return;
       auto objectVal = val.getValue();
       if (objectVal.getKind() == SymbolicValue::Aggregate) {
-        objectVal = objectVal.getAggregateMembers()[0];
+        objectVal = objectVal.getAggregateMembers()[1];
         objectVal = objectVal.getAggregateMembers()[0];
       }
       tryReplaceIntegerLoadWith(objectVal, i);
