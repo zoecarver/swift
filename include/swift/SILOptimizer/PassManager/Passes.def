@@ -325,6 +325,8 @@ PASS(ForEachLoopUnroll, "for-each-loop-unroll",
      "Unroll forEach loops over array literals")
 PASS(MandatoryCombine, "mandatory-combine",
     "Perform mandatory peephole combines")
+PASS(MemCombine, "mem-combine",
+     "Perform mandatory memory combines")
 PASS(BugReducerTester, "bug-reducer-tester",
      "sil-bug-reducer Tool Testing by Asserting on a Sentinel Function")
 PASS_RANGE(AllPasses, AADumper, BugReducerTester)

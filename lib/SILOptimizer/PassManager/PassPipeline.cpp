@@ -680,6 +680,7 @@ SILPassPipelinePlan::getOnonePassPipeline(const SILOptions &Options) {
 
   P.startPipeline("Mandatory Combines");
   P.addForEachLoopUnroll();
+  P.addMemCombine();
   P.addMandatoryCombine();
 
   // First serialize the SIL if we are asked to.
