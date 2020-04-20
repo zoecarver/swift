@@ -28,7 +28,7 @@ SILInstruction *EmitSIL::emit(SILBuilder &builder, SILParserResult instData) {
   // ever return a null instruction.
   if (unsigned(instData.kind) == 0)
     return nullptr;
-  
+
   switch (instData.kind) {
 #define INST(CLASS, PARENT)                                                    \
   case SILInstructionKind::CLASS:                                              \
