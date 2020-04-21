@@ -98,12 +98,32 @@ class ReadSIL : public ReadSILBase, public Parser {
   bool readSingleID(SILParserValues &instResults);
 
 public:
+  // TODO: remove this
+  GenericEnvironment *ContextGenericEnv = nullptr;
+  /// A callback to be invoked every time a type was deserialized.
+  // TODO: remove this
+  std::function<void(Type)> ParsedTypeCallback = [](Type) {};
+
   // Entry point for the visitor. Reads a sil instruction and visits it.
   SILParserResult read();
 
   /// Old methods moved to this parser.
   /// Parse the top-level SIL decls into the SIL module.
   void parseTopLevelSIL();
+
+  /// Old methods move to this parser.
+  bool performTypeLocChecking(TypeLoc &T, bool IsSILType,
+                              GenericEnvironment *GenericEnv = nullptr,
+                              DeclContext *DC = nullptr);
+
+  bool parseSILType(SILType &Result, GenericEnvironment *&parsedGenericEnv,
+                    bool IsFuncDecl = false,
+                    GenericEnvironment *parentGenericEnv = nullptr);
+  bool parseSILType(SILType &Result);
+  bool parseSILType(SILType &Result, SourceLoc &TypeLoc);
+  bool parseSILType(SILType &Result, SourceLoc &TypeLoc,
+                    GenericEnvironment *&parsedGenericEnv,
+                    GenericEnvironment *parentGenericEnv = nullptr);
 
   ReadSIL(unsigned bufferID, SourceFile &SF, SILParserTUStateBase *SIL)
       : Parser(bufferID, SF, SIL,
