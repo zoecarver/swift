@@ -164,10 +164,6 @@ namespace {
     llvm::DenseMap<SILBasicBlock*,
                    Located<Identifier>> UndefinedBlocks;
 
-    /// Data structures used to perform name lookup for local values.
-    llvm::StringMap<ValueBase*> LocalValues;
-    llvm::StringMap<SourceLoc> ForwardRefLocalValues;
-
     /// A callback to be invoked every time a type was deserialized.
     std::function<void(Type)> ParsedTypeCallback;
 
@@ -184,7 +180,8 @@ namespace {
 
   public:
     SILParser(ReadSIL &P)
-        : P(P), SILMod(static_cast<SILParserTUState *>(P.SIL)->M),
+        : P(P), emitter(EmitSIL(static_cast<SILParserTUState *>(P.SIL)->M)),
+          SILMod(static_cast<SILParserTUState *>(P.SIL)->M),
           TUState(*static_cast<SILParserTUState *>(P.SIL)),
           ParsedTypeCallback([](Type ty) {}) {}
 
@@ -212,19 +209,6 @@ namespace {
     /// source location is used to diagnose a failure if the block ends up never
     /// being defined.
     SILBasicBlock *getBBForReference(Identifier Name, SourceLoc Loc);
-
-    /// getLocalValue - Get a reference to a local value with the specified name
-    /// and type.
-    SILValue getLocalValue(UnresolvedValueName Name, SILType Type,
-                           SILLocation L, SILBuilder &B);
-
-    /// setLocalValue - When an instruction or block argument is defined, this
-    /// method is used to register it and update our symbol table.
-    void setLocalValue(ValueBase *Value, StringRef Name, SourceLoc NameLoc);
-
-    SILDebugLocation getDebugLoc(SILBuilder & B, SILLocation Loc) {
-      return SILDebugLocation(Loc, F->getDebugScope());
-    }
 
     /// @{ Primitive parsing.
 
@@ -520,15 +504,15 @@ bool SILParser::diagnoseProblems() {
 
     HadError = true;
   }
-  
-  if (!ForwardRefLocalValues.empty()) {
+
+  if (!emitter.getForwardRefs().empty()) {
     // FIXME: These are going to come out in nondeterministic order.
-    for (auto &Entry : ForwardRefLocalValues)
+    for (auto &Entry : emitter.getForwardRefs())
       P.diagnose(Entry.second, diag::sil_use_of_undefined_value,
                  Entry.first());
     HadError = true;
   }
-  
+
   return HadError;
 }
 
@@ -658,73 +642,6 @@ bool SILParser::parseGlobalName(Identifier &Name) {
   return P.parseToken(tok::at_sign, diag::expected_sil_value_name) ||
          parseSILIdentifier(Name, diag::expected_sil_value_name);
 }
-
-/// getLocalValue - Get a reference to a local value with the specified name
-/// and type.
-SILValue SILParser::getLocalValue(UnresolvedValueName Name, SILType Type,
-                                  SILLocation Loc, SILBuilder &B) {
-  if (Name.isUndef())
-    return SILUndef::get(Type, B.getFunction());
-
-  // Check to see if this is already defined.
-  ValueBase *&Entry = LocalValues[Name.Name];
-
-  if (Entry) {
-    // If this value is already defined, check it to make sure types match.
-    SILType EntryTy = Entry->getType();
-
-    if (EntryTy != Type) {
-      HadError = true;
-      P.diagnose(Name.NameLoc, diag::sil_value_use_type_mismatch, Name.Name,
-                 EntryTy.getASTType(), Type.getASTType());
-      // Make sure to return something of the requested type.
-      return new (SILMod) GlobalAddrInst(getDebugLoc(B, Loc), Type);
-    }
-
-    return SILValue(Entry);
-  }
-  
-  // Otherwise, this is a forward reference.  Create a dummy node to represent
-  // it until we see a real definition.
-  ForwardRefLocalValues[Name.Name] = Name.NameLoc;
-
-  Entry = new (SILMod) GlobalAddrInst(getDebugLoc(B, Loc), Type);
-  return Entry;
-}
-
-/// setLocalValue - When an instruction or block argument is defined, this
-/// method is used to register it and update our symbol table.
-void SILParser::setLocalValue(ValueBase *Value, StringRef Name,
-                              SourceLoc NameLoc) {
-  ValueBase *&Entry = LocalValues[Name];
-
-  // If this value was already defined, it is either a redefinition, or a
-  // specification for a forward referenced value.
-  if (Entry) {
-    if (!ForwardRefLocalValues.erase(Name)) {
-      P.diagnose(NameLoc, diag::sil_value_redefinition, Name);
-      HadError = true;
-      return;
-    }
-
-    // If the forward reference was of the wrong type, diagnose this now.
-    if (Entry->getType() != Value->getType()) {
-      P.diagnose(NameLoc, diag::sil_value_def_type_mismatch, Name,
-                 Entry->getType().getASTType(),
-                 Value->getType().getASTType());
-      HadError = true;
-    } else {
-      // Forward references only live here if they have a single result.
-      Entry->replaceAllUsesWith(Value);
-    }
-    Entry = Value;
-    return;
-  }
-
-  // Otherwise, just store it in our map.
-  Entry = Value;
-}
-
 
 //===----------------------------------------------------------------------===//
 // SIL Parsing Logic
@@ -1515,7 +1432,7 @@ bool SILParser::parseValueRef(SILValue &Result, SILType Ty,
                               SILLocation Loc, SILBuilder &B) {
   UnresolvedValueName Name;
   if (parseValueName(Name)) return true;
-  Result = getLocalValue(Name, Ty, Loc, B);
+  Result = emitter.getLocalValue(Name, Ty, Loc, B);
   return false;
 }
 
@@ -1534,8 +1451,8 @@ bool SILParser::parseTypedValueRef(SILValue &Result, SourceLoc &Loc,
       P.parseToken(tok::colon, diag::expected_sil_colon_value_ref) ||
       parseSILType(Ty))
     return true;
-  
-  Result = getLocalValue(Name, Ty, RegularLocation(Loc), B);
+
+  Result = emitter.getLocalValue(Name, Ty, RegularLocation(Loc), B);
   return false;
 }
 
@@ -2523,7 +2440,7 @@ bool SILParser::parseSpecificSILInstruction(SILBuilder &B,
       return true;
 
     SILType expectedTy = SILType::getSILTokenType(P.Context);
-    SILValue op = getLocalValue(argName, expectedTy, InstLoc, B);
+    SILValue op = emitter.getLocalValue(argName, expectedTy, InstLoc, B);
 
     if (Opcode == SILInstructionKind::AbortApplyInst) {
       ResultVal = B.createAbortApply(InstLoc, op);
@@ -3587,15 +3504,15 @@ bool SILParser::parseSpecificSILInstruction(SILBuilder &B,
     SILType ValType = AddrVal->getType().getObjectType();
 
     if (IsStore) {
-      ResultVal =
-          B.createStore(InstLoc, getLocalValue(From, ValType, InstLoc, B),
-                        AddrVal, StoreQualifier);
+      ResultVal = B.createStore(
+          InstLoc, emitter.getLocalValue(From, ValType, InstLoc, B), AddrVal,
+          StoreQualifier);
     } else {
       assert(IsAssign);
 
-      ResultVal =
-          B.createAssign(InstLoc, getLocalValue(From, ValType, InstLoc, B),
-                         AddrVal, AssignQualifier);
+      ResultVal = B.createAssign(
+          InstLoc, emitter.getLocalValue(From, ValType, InstLoc, B), AddrVal,
+          AssignQualifier);
     }
 
     break;
@@ -3793,7 +3710,7 @@ bool SILParser::parseSpecificSILInstruction(SILBuilder &B,
     if (Opcode == SILInstructionKind::StoreBorrowInst) {
       SILType valueTy = addrVal->getType().getObjectType();
       ResultVal = B.createStoreBorrow(
-          InstLoc, getLocalValue(from, valueTy, InstLoc, B), addrVal);
+          InstLoc, emitter.getLocalValue(from, valueTy, InstLoc, B), addrVal);
       break;
     }
 
@@ -3806,9 +3723,9 @@ bool SILParser::parseSpecificSILInstruction(SILBuilder &B,
       return true;                                                             \
     }                                                                          \
     auto valueTy = SILType::getPrimitiveObjectType(refType.getReferentType()); \
-    ResultVal =                                                                \
-        B.createStore##Name(InstLoc, getLocalValue(from, valueTy, InstLoc, B), \
-                            addrVal, IsInitialization_t(isInit));              \
+    ResultVal = B.createStore##Name(                                           \
+        InstLoc, emitter.getLocalValue(from, valueTy, InstLoc, B), addrVal,    \
+        IsInitialization_t(isInit));                                           \
     break;                                                                     \
   }
 #include "swift/AST/ReferenceStorage.def"
@@ -4228,7 +4145,7 @@ bool SILParser::parseSpecificSILInstruction(SILBuilder &B,
         return true;
 
       auto I1Ty = SILType::getBuiltinIntegerType(1, SILMod.getASTContext());
-      SILValue CondVal = getLocalValue(Cond, I1Ty, InstLoc, B);
+      SILValue CondVal = emitter.getLocalValue(Cond, I1Ty, InstLoc, B);
       ResultVal = B.createCondBranch(
           InstLoc, CondVal, getBBForReference(BBName, NameLoc), Args,
           getBBForReference(BBName2, NameLoc2), Args2);
@@ -4342,7 +4259,7 @@ bool SILParser::parseSpecificSILInstruction(SILBuilder &B,
       }
 
       SILValue SrcLVal =
-          getLocalValue(SrcLName, DestLVal->getType(), InstLoc, B);
+          emitter.getLocalValue(SrcLName, DestLVal->getType(), InstLoc, B);
       ResultVal = B.createCopyAddr(InstLoc, SrcLVal, DestLVal, IsTake_t(IsTake),
                                    IsInitialization_t(IsInit));
       break;
@@ -4607,11 +4524,12 @@ bool SILParser::parseSpecificSILInstruction(SILBuilder &B,
       SmallVector<std::pair<EnumElementDecl *, SILValue>, 4> CaseValues;
       SILValue DefaultValue;
       if (DefaultValueName)
-        DefaultValue = getLocalValue(*DefaultValueName, ResultType, InstLoc, B);
+        DefaultValue =
+            emitter.getLocalValue(*DefaultValueName, ResultType, InstLoc, B);
       for (auto &caseName : CaseValueNames)
         CaseValues.push_back(std::make_pair(
             caseName.first,
-            getLocalValue(caseName.second, ResultType, InstLoc, B)));
+            emitter.getLocalValue(caseName.second, ResultType, InstLoc, B)));
 
       if (Opcode == SILInstructionKind::SelectEnumInst)
         ResultVal = B.createSelectEnum(InstLoc, Val, ResultType, DefaultValue,
@@ -4796,12 +4714,12 @@ bool SILParser::parseSpecificSILInstruction(SILBuilder &B,
       SILValue DefaultValue;
       if (DefaultResultName)
         DefaultValue =
-            getLocalValue(*DefaultResultName, ResultType, InstLoc, B);
+            emitter.getLocalValue(*DefaultResultName, ResultType, InstLoc, B);
       SILType ValType = Val->getType();
       for (auto &caseName : CaseValueAndResultNames)
         CaseValues.push_back(std::make_pair(
-            getLocalValue(caseName.first, ValType, InstLoc, B),
-            getLocalValue(caseName.second, ResultType, InstLoc, B)));
+            emitter.getLocalValue(caseName.first, ValType, InstLoc, B),
+            emitter.getLocalValue(caseName.second, ResultType, InstLoc, B)));
 
       ResultVal = B.createSelectValue(InstLoc, Val, ResultType, DefaultValue,
                                       CaseValues);
@@ -4997,7 +4915,7 @@ bool SILParser::parseSpecificSILInstruction(SILBuilder &B,
         return true;
       }
 
-      auto invokeVal = getLocalValue(invokeName, invokeTy, InstLoc, B);
+      auto invokeVal = emitter.getLocalValue(invokeName, invokeTy, InstLoc, B);
 
       SubstitutionMap subMap;
       if (!parsedSubs.empty()) {
@@ -5214,7 +5132,7 @@ bool SILParser::parseSILInstruction(SILBuilder &B) {
   if (auto inst = emitter.emit(B, instData)) {
     unsigned i = 0;
     for (auto result : inst->getResults()) {
-      setLocalValue(result, instData.results[i], instData.loc.begin);
+      emitter.setLocalValue(result, instData.results[i], instData.loc.begin);
       i++;
     }
     return true;
@@ -5287,7 +5205,8 @@ bool SILParser::parseSILInstruction(SILBuilder &B) {
                  results.size());
     } else {
       for (size_t i : indices(results)) {
-        setLocalValue(results[i], resultNames[i].Item, resultNames[i].Loc);
+        emitter.setLocalValue(results[i], resultNames[i].Item,
+                              resultNames[i].Loc);
       }
     }
   }
@@ -5359,7 +5278,7 @@ bool SILParser::parseCallInstruction(SILLocation InstLoc,
       return true;
   }
 
-  SILValue FnVal = getLocalValue(FnName, Ty, InstLoc, B);
+  SILValue FnVal = emitter.getLocalValue(FnName, Ty, InstLoc, B);
 
   SILType FnTy = FnVal->getType();
   CanSILFunctionType substFTI = FTI;
@@ -5408,7 +5327,7 @@ bool SILParser::parseCallInstruction(SILLocation InstLoc,
     SmallVector<SILValue, 4> Args;
     for (auto &ArgName : ArgNames) {
       SILType expectedTy = substConv.getSILArgumentType(ArgNo++);
-      Args.push_back(getLocalValue(ArgName, expectedTy, InstLoc, B));
+      Args.push_back(emitter.getLocalValue(ArgName, expectedTy, InstLoc, B));
     }
 
     ResultVal = B.createApply(InstLoc, FnVal, subs, Args, IsNonThrowingApply);
@@ -5422,7 +5341,7 @@ bool SILParser::parseCallInstruction(SILLocation InstLoc,
     SmallVector<SILValue, 4> Args;
     for (auto &ArgName : ArgNames) {
       SILType expectedTy = substConv.getSILArgumentType(ArgNo++);
-      Args.push_back(getLocalValue(ArgName, expectedTy, InstLoc, B));
+      Args.push_back(emitter.getLocalValue(ArgName, expectedTy, InstLoc, B));
     }
 
     ResultVal =
@@ -5439,7 +5358,7 @@ bool SILParser::parseCallInstruction(SILLocation InstLoc,
     unsigned ArgNo = substConv.getNumSILArguments() - ArgNames.size();
     for (auto &ArgName : ArgNames) {
       SILType expectedTy = substConv.getSILArgumentType(ArgNo++);
-      Args.push_back(getLocalValue(ArgName, expectedTy, InstLoc, B));
+      Args.push_back(emitter.getLocalValue(ArgName, expectedTy, InstLoc, B));
     }
 
     // FIXME: Why the arbitrary order difference in IRBuilder type argument?
@@ -5467,7 +5386,7 @@ bool SILParser::parseCallInstruction(SILLocation InstLoc,
     SmallVector<SILValue, 4> args;
     for (auto &argName : ArgNames) {
       SILType expectedTy = substConv.getSILArgumentType(argNo++);
-      args.push_back(getLocalValue(argName, expectedTy, InstLoc, B));
+      args.push_back(emitter.getLocalValue(argName, expectedTy, InstLoc, B));
     }
 
     SILBasicBlock *normalBB = getBBForReference(normalBBName, normalBBLoc);
@@ -5586,7 +5505,7 @@ bool SILParser::parseSILBasicBlock(SILBuilder &B) {
         } else {
           Arg = BB->createPhiArgument(Ty, OwnershipKind);
         }
-        setLocalValue(Arg, Name, NameLoc);
+        emitter.setLocalValue(Arg, Name, NameLoc);
       } while (P.consumeIf(tok::comma));
       
       if (P.parseToken(tok::r_paren, diag::sil_basicblock_arg_rparen))

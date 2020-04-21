@@ -87,9 +87,7 @@ public:
   // The default implementation of the visitor is to set the parser result to
   // `0` so that we know that we cannot handle this type of instruction.
 #define FULL_INST(ID, NAME, PARENT, MEMBEHAVIOR, MAYRELEASE)                   \
-  void read##ID(SILParserResult &out) { \
-    out.kind = SILInstructionKind(0); \
-  }
+  void read##ID(SILParserResult &out) { out.kind = SILInstructionKind(0); }
 #include "swift/SIL/SILNodes.def"
 };
 
@@ -159,7 +157,29 @@ public:
 
 // A visitor for emitting sil instructions based on a *valid* SILParserResult.
 class EmitSIL : public EmitSILBase {
+  SILModule &module;
+
+  /// Data structures used to perform name lookup for local values.
+  llvm::StringMap<ValueBase *> localValues;
+  llvm::StringMap<SourceLoc> forwardRefs;
+
+  template <class... DiagArgs, class... Args>
+  InFlightDiagnostic diagnose(ASTContext &ctx, SourceLoc loc,
+                              Diag<DiagArgs...> diagID, Args &&... args);
+
 public:
+  // TODO: make getForwardRefs, getLocalValue, and setLocalValue private.
+  llvm::StringMap<SourceLoc> getForwardRefs();
+
+  /// getLocalValue - Get a reference to a local value with the specified name
+  /// and type.
+  SILValue getLocalValue(UnresolvedValueName Name, SILType Type, SILLocation L,
+                         SILBuilder &B);
+
+  /// setLocalValue - When an instruction or block argument is defined, this
+  /// method is used to register it and update our symbol table.
+  void setLocalValue(ValueBase *Value, StringRef Name, SourceLoc NameLoc);
+
   // The main entry point for this visitor. It is required that a sil
   // instruction can be created given the information in SILParserResult.
   // Therefore, this method should never return nullptr. The only exception is
@@ -167,6 +187,8 @@ public:
   // been created so, the caller should revert to the old parser. "builder" will
   // be used to create this sil instruction.
   SILInstruction *emit(SILBuilder &builder, SILParserResult);
+
+  EmitSIL(SILModule &module) : module(module) {}
 };
 
 } // namespace syntax

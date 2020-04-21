@@ -82,13 +82,13 @@ SILParserResult ReadSIL::read() {
   else
     llvm_unreachable("Unhandled SILNode");
   readingResult.results = instResults;
-  
+
   // If we couldn't read the instruction, reset the parser position for the old
   // parser (which we will bail out to).
   if (unsigned(readingResult.kind) == 0) {
     backtrackToPosition(start);
   }
-  
+
   return readingResult;
 }
 
