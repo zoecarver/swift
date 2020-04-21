@@ -157,15 +157,25 @@ bool ReadSIL::parseSILType(SILType &Result, SourceLoc &TypeLoc,
 //===----------------------------------------------------------------------===//
 
 bool ReadSIL::readSingleID(SILParserValues &instResults) {
-  if (!Tok.getRawText().equals("%")) {
+  if (!Tok.is(tok::sil_local_name))
     return false;
-  }
+  instResults.push_back(Tok.getRawText());
   consumeToken();
-  if (Tok.is(tok::identifier)) {
-    instResults.push_back(Tok.getRawText());
-    return true;
-  }
-  return false;
+  return true;
+}
+
+bool ReadSIL::readSingleOperand(SILParserOperands &instOperands) {
+  if (!Tok.is(tok::sil_local_name))
+    return false;
+  StringRef valId = Tok.getRawText();
+  consumeToken();
+  if (!consumeIf(tok::colon))
+    return false;
+  SILType type;
+  if (parseSILType(type))
+    return false;
+  instOperands.emplace_back(valId, type);
+  return true;
 }
 
 SILParserResult ReadSIL::read() {
@@ -175,7 +185,7 @@ SILParserResult ReadSIL::read() {
   readingResult.loc.end = Tok.getLoc();
 
   // Read the results, if any:
-  // (%x,)? | %x
+  // (%x, ...) | %x
   SILParserValues instResults;
   if (consumeIf(tok::l_paren)) {
     while (!consumeIf(tok::r_paren)) {
@@ -191,17 +201,20 @@ SILParserResult ReadSIL::read() {
         return {};
       }
     }
-  } else if (Tok.getRawText().equals("%")) {
+  } else if (Tok.is(tok::sil_local_name)) {
     if (!readSingleID(instResults)) {
       return {};
     }
   }
 
-  // Read the SILInstruction Kind.
-  if (!Tok.is(tok::identifier)) {
+  // Parse the '='
+  if (!consumeIf(tok::equal) && !instResults.empty()) {
+    diagnose(Tok.getLoc(), diag::expected_equal_in_sil_instr);
     return {};
   }
 
+  // Read the SILInstruction Kind. We don't check if it's an identifier because
+  // it may not be (i.e. struct).
   auto instStr = Tok.getRawText();
   consumeToken();
   readingResult.loc.end = Tok.getLoc();
@@ -230,5 +243,9 @@ SILParserResult ReadSIL::read() {
 //===----------------------------------------------------------------------===//
 // ReadSIL visitors
 //===----------------------------------------------------------------------===//
+
+void ReadSIL::readCopyValueInst(SILParserResult &out) {
+  readSingleOperand(out.operands);
+}
 
 } // namespace swift

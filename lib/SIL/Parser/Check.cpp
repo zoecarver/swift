@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "swift/SIL/SILModule.h"
 #include "swift/SIL/SILParser.h"
 
 using namespace swift;
@@ -20,6 +21,14 @@ using namespace swift::syntax;
 //===----------------------------------------------------------------------===//
 
 namespace swift {
+
+template <class... DiagArgs, class... Args>
+InFlightDiagnostic CheckSIL::diagnose(SourceLoc loc, Diag<DiagArgs...> diagID,
+                                     Args &&... args) {
+  return DiagnosticEngine(module.getSourceManager())
+    .diagnose(loc, Diagnostic(diagID, std::forward<Args>(args)...));
+}
+
 
 bool CheckSIL::check(SILParserResult toCheck) {
   // If the kind is `0` then we don't suppor this instruction yet. Bail but,
@@ -38,5 +47,17 @@ bool CheckSIL::check(SILParserResult toCheck) {
 //===----------------------------------------------------------------------===//
 // CheckSIL visitors
 //===----------------------------------------------------------------------===//
+
+bool CheckSIL::checkCopyValueInst(SILParserResult result) {
+  if (result.operands.size() != 1) {
+    diagnose(result.loc.begin, diag::wrong_result_count_in_sil_instr, 1);
+    return false;
+  }
+  if (result.results.size() != 1) {
+    diagnose(result.loc.begin, diag::wrong_operand_count_in_sil_instr, 1);
+    return false;
+  }
+  return true;
+}
 
 } // namespace swift
