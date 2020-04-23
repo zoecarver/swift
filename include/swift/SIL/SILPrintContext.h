@@ -104,6 +104,10 @@ public:
 
   SILPrintContext::ID getID(const SILNode *node);
 
+  /// This is only used in SILDiff. Gets a reference to the value of the
+  /// value-id map. Can be used to change the ID of a SILNode.
+  unsigned &getIDNumberRef(const SILNode *node);
+
   /// Returns true if the \p Scope has and ID assigned.
   bool hasScopeID(const SILDebugScope *Scope) const {
     return ScopeToIDMap.count(Scope) != 0;

@@ -405,6 +405,9 @@ public:
   /// Pretty-print the SILBasicBlock with the designated stream and context.
   void print(llvm::raw_ostream &OS, SILPrintContext &Ctx) const;
 
+  /// Pretty-print the SILBasicBlock arguments with the designated context.
+  void printArguments(SILPrintContext &Ctx) const;
+
   void printAsOperand(raw_ostream &OS, bool PrintType = true);
 
   /// getSublistAccess() - returns pointer to member of instruction list

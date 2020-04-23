@@ -76,6 +76,7 @@ class StringLiteralExpr;
 class ValueDecl;
 class VarDecl;
 class FunctionRefBaseInst;
+class SILPrintContext;
 
 template <typename ImplClass> class SILClonerWithScopes;
 
@@ -685,6 +686,7 @@ public:
   /// Pretty-print the value.
   void dump() const;
   void print(raw_ostream &OS) const;
+  void print(SILPrintContext &Ctx, bool printContextInfo = true) const;
 
   /// Pretty-print the value in context, preceded by its operands (if the
   /// value represents the result of an instruction) and followed by its

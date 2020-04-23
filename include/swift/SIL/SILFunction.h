@@ -1076,7 +1076,7 @@ public:
   }
 
   /// Pretty-print the SILFunction with the context \p PrintCtx.
-  void print(SILPrintContext &PrintCtx) const;
+  void print(SILPrintContext &PrintCtx, bool onlyDecl = false) const;
 
   /// Pretty-print the SILFunction's name using SIL syntax,
   /// '@function_mangled_name'.

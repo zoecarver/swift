@@ -926,7 +926,7 @@ public:
     *this << getSILInstructionName(I->getKind()) << " ";
   }
 
-  void print(const SILInstruction *I) {
+  void print(const SILInstruction *I, bool printContextInfo = true) {
     if (auto *FRI = dyn_cast<FunctionRefInst>(I))
       *this << "  // function_ref "
             << demangleSymbol(FRI->getInitiallyReferencedFunction()->getName())
@@ -971,6 +971,11 @@ public:
 
     // Use the visitor to print the rest of the instruction.
     visit(const_cast<SILInstruction*>(I));
+
+    if (!printContextInfo) {
+      *this << '\n';
+      return;
+    }
 
     // Maybe print debugging information.
     bool printedSlashes = false;
@@ -2417,6 +2422,10 @@ void SILInstruction::print(raw_ostream &OS) const {
   SILPrinter(Ctx).print(this);
 }
 
+void SILInstruction::print(SILPrintContext &Ctx, bool printContextInfo) const {
+  SILPrinter(Ctx).print(this, printContextInfo);
+}
+
 /// Pretty-print the SILBasicBlock to errs.
 void SILBasicBlock::dump() const {
   print(llvm::errs());
@@ -2438,6 +2447,10 @@ void SILBasicBlock::print(raw_ostream &OS) const {
 
 void SILBasicBlock::print(raw_ostream &OS, SILPrintContext &Ctx) const {
   SILPrinter(Ctx).print(this);
+}
+
+void SILBasicBlock::printArguments(SILPrintContext &Ctx) const {
+  SILPrinter(Ctx).printBlockArguments(this);
 }
 
 /// Pretty-print the SILFunction to errs.
@@ -2482,7 +2495,7 @@ static void printLinkage(llvm::raw_ostream &OS, SILLinkage linkage,
 }
 
 /// Pretty-print the SILFunction to the designated stream.
-void SILFunction::print(SILPrintContext &PrintCtx) const {
+void SILFunction::print(SILPrintContext &PrintCtx, bool onlyDecl) const {
   llvm::raw_ostream &OS = PrintCtx.OS();
   if (PrintCtx.printDebugInfo()) {
     auto &SM = getModule().getASTContext().SourceMgr;
@@ -2614,6 +2627,9 @@ void SILFunction::print(SILPrintContext &PrintCtx) const {
   llvm::DenseMap<CanType, Identifier> sugaredTypeNames;
   printSILFunctionNameAndType(OS, this, sugaredTypeNames);
 
+  if (onlyDecl)
+    return;
+
   if (!isExternalDeclaration()) {
     if (auto eCount = getEntryCount()) {
       OS << " !function_entry_count(" << eCount.getValue() << ")";
@@ -2627,7 +2643,7 @@ void SILFunction::print(SILPrintContext &PrintCtx) const {
 
   OS << "\n\n";
 }
-      
+
 /// Pretty-print the SILFunction's name using SIL syntax,
 /// '@function_mangled_name'.
 void SILFunction::printName(raw_ostream &OS) const {
@@ -3522,4 +3538,10 @@ ID SILPrintContext::getID(const SILNode *node) {
 
   ID R = {ID::SSAValue, ValueToIDMap[node]};
   return R;
+}
+
+unsigned &SILPrintContext::getIDNumberRef(const SILNode *node) {
+  // Make sure the node is filled.
+  (void)getID(node);
+  return ValueToIDMap[node];
 }
