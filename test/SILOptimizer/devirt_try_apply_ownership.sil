@@ -432,7 +432,7 @@ bb0(%0 : @owned $Base):
   store %6 to [trivial] %1 : $*Optional<Int32>
   dealloc_stack %3 : $*Optional<Int32>
   %9 = class_method %0 : $Base, #Base.foo : (Base) -> () throws -> Int32?, $@convention(method) (@guaranteed Base) -> (Optional<Int32>, @error Error)
-  try_apply %9(%0) : $@convention(method) (@guaranteed Base) -> (Optional<Int32>, @error Error), normal bb1, error bb4
+  try_apply %9(%0) : $@convention(method) (@guaranteed Base) -> (Optional<Int32>, @error Error), normal bb1, error bb3
 
 bb1(%11 : $Optional<Int32>):
   store %11 to [trivial] %1 : $*Optional<Int32>
@@ -444,12 +444,9 @@ bb2:
   dealloc_stack %1 : $*Optional<Int32>
   return %14 : $Optional<Int32>
 
-bb3:
+bb3(%20 : @owned $Error):
   destroy_value %20 : $Error
   br bb2
-
-bb4(%20 : @owned $Error):
-  br bb3
 }
 
 
@@ -470,7 +467,7 @@ bb0(%0 : @owned $Base):
   store %6 to [init] %1 : $*Optional<Base>
   dealloc_stack %3 : $*Optional<Base>
   %9 = class_method %0 : $Base, #Base.boo1 : (Base) -> () throws -> Base, $@convention(method) (@guaranteed Base) -> (@owned Base, @error Error)
-  try_apply %9(%0) : $@convention(method) (@guaranteed Base) -> (@owned Base, @error Error), normal bb1, error bb4
+  try_apply %9(%0) : $@convention(method) (@guaranteed Base) -> (@owned Base, @error Error), normal bb1, error bb3
 
 bb1(%11 : @owned $Base):
   %12 = enum $Optional<Base>, #Optional.some!enumelt, %11 : $Base
@@ -484,12 +481,9 @@ bb2:
   dealloc_stack %1 : $*Optional<Base>
   return %16 : $Optional<Base>
 
-bb3:
+bb3(%24 : @owned $Error):
   destroy_value %24 : $Error
   br bb2
-
-bb4(%24 : @owned $Error):
-  br bb3
 }
 
 
@@ -507,7 +501,7 @@ bb0(%0 : @owned $Base):
   store %6 to [init] %1 : $*Optional<Base>
   dealloc_stack %3 : $*Optional<Base>
   %9 = class_method %0 : $Base, #Base.boo2 : (Base) -> () throws -> Base?, $@convention(method) (@guaranteed Base) -> (@owned Optional<Base>, @error Error)
-  try_apply %9(%0) : $@convention(method) (@guaranteed Base) -> (@owned Optional<Base>, @error Error), normal bb1, error bb4
+  try_apply %9(%0) : $@convention(method) (@guaranteed Base) -> (@owned Optional<Base>, @error Error), normal bb1, error bb3
 
 bb1(%11 : @owned $Optional<Base>):
   store %11 to [assign] %1 : $*Optional<Base>
@@ -520,12 +514,9 @@ bb2:
   dealloc_stack %1 : $*Optional<Base>
   return %15 : $Optional<Base>
 
-bb3:
+bb3(%23 : @owned $Error):
   destroy_value %23 : $Error
   br bb2
-
-bb4(%23 : @owned $Error):
-  br bb3
 }
 
 
@@ -588,7 +579,7 @@ bb0:
   %6 = struct $Int32 (%5 : $Builtin.Int32)
   store %6 to [trivial] %0 : $*Int32
   %8 = class_method %3 : $CP2, #CP2.foo : (CP2) -> () throws -> Int32, $@convention(method) (@guaranteed CP2) -> (Int32, @error Error)
-  try_apply %8(%3) : $@convention(method) (@guaranteed CP2) -> (Int32, @error Error), normal bb1, error bb4
+  try_apply %8(%3) : $@convention(method) (@guaranteed CP2) -> (Int32, @error Error), normal bb1, error bb3
 
 bb1(%10 : $Int32):
   store %10 to [trivial] %0 : $*Int32
@@ -600,12 +591,9 @@ bb2:
   dealloc_stack %0 : $*Int32
   return %13 : $Int32
 
-bb3:
+bb3(%19 : @owned $Error):
   destroy_value %19 : $Error
   br bb2
-
-bb4(%19 : @owned $Error):
-  br bb3
 }
 
 // DISABLE THIS TEST CASE FOR NOW. AS RLE GETS BETTER. WILL RE-ENABLE.
@@ -629,7 +617,7 @@ bb0:
   store %8 to [trivial] %0 : $*Int32
   %10 = open_existential_addr immutable_access %1 : $*P to $*@opened("3F4928FC-364E-11E5-9488-B8E856428C60") P
   %11 = witness_method $@opened("3F4928FC-364E-11E5-9488-B8E856428C60") P, #P.foo, %10 : $*@opened("3F4928FC-364E-11E5-9488-B8E856428C60") P : $@convention(witness_method: P) <τ_0_0 where τ_0_0 : P> (@in_guaranteed τ_0_0) -> (Int32, @error Error)
-  try_apply %11<@opened("3F4928FC-364E-11E5-9488-B8E856428C60") P>(%10) : $@convention(witness_method: P) <τ_0_0 where τ_0_0 : P> (@in_guaranteed τ_0_0) -> (Int32, @error Error), normal bb1, error bb4
+  try_apply %11<@opened("3F4928FC-364E-11E5-9488-B8E856428C60") P>(%10) : $@convention(witness_method: P) <τ_0_0 where τ_0_0 : P> (@in_guaranteed τ_0_0) -> (Int32, @error Error), normal bb1, error bb3
 
 bb1(%13 : $Int32):
   store %13 to [trivial] %0 : $*Int32
@@ -642,12 +630,9 @@ bb2:
   dealloc_stack %0 : $*Int32
   return %16 : $Int32
 
-bb3:
+bb3(%23 : @owned $Error):
   destroy_value %23 : $Error
   br bb2
-
-bb4(%23 : @owned $Error):
-  br bb3
 }
 
 
@@ -672,7 +657,7 @@ bb0:
   %7 = enum $Optional<Int32>, #Optional.some!enumelt, %6 : $Int32
   store %7 to [trivial] %0 : $*Optional<Int32>
   %9 = class_method %3 : $Derived1, #Derived1.foo : (Derived1) -> () throws -> Int32?, $@convention(method) (@guaranteed Derived1) -> (Optional<Int32>, @error Error)
-  try_apply %9(%3) : $@convention(method) (@guaranteed Derived1) -> (Optional<Int32>, @error Error), normal bb1, error bb4
+  try_apply %9(%3) : $@convention(method) (@guaranteed Derived1) -> (Optional<Int32>, @error Error), normal bb1, error bb3
 
 bb1(%11 : $Optional<Int32>):
   store %11 to [trivial] %0 : $*Optional<Int32>
@@ -684,12 +669,9 @@ bb2:
   dealloc_stack %0 : $*Optional<Int32>
   return %14 : $Optional<Int32>
 
-bb3:
+bb3(%20 : @owned $Error):
   destroy_value %20 : $Error
   br bb2
-
-bb4(%20 : @owned $Error):
-  br bb3
 }
 
 // Check that -specdevirt can devirtualize it
@@ -715,7 +697,7 @@ bb0:
   %6 = struct $Int32 (%5 : $Builtin.Int32)
   store %6 to [trivial] %0 : $*Int32
   %8 = class_method %1 : $CP2, #CP2.foo : (CP2) -> () throws -> Int32, $@convention(method) (@guaranteed CP2) -> (Int32, @error Error)
-  try_apply %8(%1) : $@convention(method) (@guaranteed CP2) -> (Int32, @error Error), normal bb1, error bb4
+  try_apply %8(%1) : $@convention(method) (@guaranteed CP2) -> (Int32, @error Error), normal bb1, error bb3
 
 bb1(%10 : $Int32):
   store %10 to [trivial] %0 : $*Int32
@@ -727,12 +709,9 @@ bb2:
   dealloc_stack %0 : $*Int32
   return %13 : $Int32
 
-bb3:
+bb3(%19 : @owned $Error):
   destroy_value %19 : $Error
   br bb2
-
-bb4(%19 : @owned $Error):
-  br bb3
 }
 
 

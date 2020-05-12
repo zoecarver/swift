@@ -899,7 +899,7 @@ class C {
 sil [noinline] @callThrowing : $@convention(method) <T> (@in_guaranteed T, @guaranteed @callee_owned () -> (@out T, @error Error), @guaranteed C) -> @out T {
 bb0(%0 : $*T, %1 : $*T, %2 : $@callee_owned () -> (@out T, @error Error), %3 : $C):
   strong_retain %2 : $@callee_owned () -> (@out T, @error Error)
-  try_apply %2(%0) : $@callee_owned () -> (@out T, @error Error), normal bb1, error bb4
+  try_apply %2(%0) : $@callee_owned () -> (@out T, @error Error), normal bb1, error bb3
 
 bb1(%6 : $()):
   br bb2
@@ -909,13 +909,10 @@ bb2:
   %10 = tuple ()
   return %10 : $()
 
-bb3:
+bb3(%15 : $Error):
   copy_addr %1 to [initialization] %0 : $*T
   strong_release %15 : $Error
   br bb2
-
-bb4(%15 : $Error):
-  br bb3
 }
 
 

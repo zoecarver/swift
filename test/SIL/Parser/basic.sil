@@ -68,18 +68,14 @@ bb1:
 sil @test2 : $(Int) -> () {               // CHECK-LABEL: sil @test2 : $@convention(thin) (Int) -> ()
 bb0(%0 : $Int):
   br bb2
-bb1:
-  // Forward reference MRVs.
-  store %0 to %7 : $*Int                     // CHECK:   store %0 to %7
-  strong_release %6 : $<τ_0_0> { var τ_0_0 } <Int>              // CHECK:   strong_release %6
-
-  return %5 : $()                              // CHECK:   return %5 : $()
 bb2:
-  %5 = tuple ()                                // CHECK:   %5 = tuple ()
-  %6 = alloc_box $<τ_0_0> { var τ_0_0 } <Int>                          // CHECK:   %6 = alloc_box $<τ_0_0> { var τ_0_0 } <Int>
-  %7 = project_box %6 : $<τ_0_0> { var τ_0_0 } <Int>, 0           // CHECK:   %7 = project_box %6 : $<τ_0_0> { var τ_0_0 } <Int>
+  %2 = tuple ()                                // CHECK:   %2 = tuple ()
+  %3 = alloc_box $<τ_0_0> { var τ_0_0 } <Int>                          // CHECK:   %3 = alloc_box $<τ_0_0> { var τ_0_0 } <Int>
+  %4 = project_box %3 : $<τ_0_0> { var τ_0_0 } <Int>, 0           // CHECK:   %4 = project_box %3 : $<τ_0_0> { var τ_0_0 } <Int>
+  store %0 to %4 : $*Int                     // CHECK:   store %0 to %4
+  strong_release %3 : $<τ_0_0> { var τ_0_0 } <Int>              // CHECK:   strong_release %3
 
-  br bb1                                       // CHECK:   br bb1
+  return %2 : $()                              // CHECK:   return %2 : $()
 }
 
 sil @named_tuple : $() -> (Builtin.Word, Builtin.Word) {

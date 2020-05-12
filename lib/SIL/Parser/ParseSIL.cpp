@@ -692,6 +692,7 @@ SILValue SILParser::getLocalValue(UnresolvedValueName Name, SILType Type,
   // Otherwise, this is a forward reference.  Create a dummy node to represent
   // it until we see a real definition.
   ForwardRefLocalValues[Name.Name] = Name.NameLoc;
+  assert(false);
 
   Entry = new (SILMod) GlobalAddrInst(getDebugLoc(B, Loc), Type);
   return Entry;
