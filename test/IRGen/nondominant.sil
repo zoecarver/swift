@@ -9,11 +9,11 @@ import Builtin
 sil @test0 : $@convention(thin) () -> (Builtin.Int8) {
 bb0:
   br bb1
-bb2:
+bb2(%0 : $Builtin.Int8):
   return %0 : $Builtin.Int8
 bb1:
-  %0 = integer_literal $Builtin.Int8, 7
-  br bb2
+  %1 = integer_literal $Builtin.Int8, 7
+  br bb2(%1 : $Builtin.Int8)
 }
 // CHECK:   define{{( dllexport)?}}{{( protected)?}} swiftcc i8 @test0()
 // CHECK-NOT: }
