@@ -4912,6 +4912,33 @@ public:
   /// - accesses must be uniquely ended
   /// - flow-sensitive states must be equivalent on all paths into a block
   void verifyFlowSensitiveRules(SILFunction *F) {
+    // Keep track of defined values for checking forward-refs.
+    llvm::DenseSet<SILValue> definedValues;
+    for (auto &BB : *F) {
+      definedValues.insert(BB.getArguments().begin(), BB.getArguments().end());
+      for (auto &inst : BB) {
+        bool allOperandsDefined = llvm::all_of(inst.getAllOperands(),
+                                               [&definedValues](Operand const &op) {
+          return isa<SILUndef>(op.get()) || definedValues.count(op.get());
+        });
+        if (!allOperandsDefined) {
+          // Loop over the operands again. We know we're going to crash so it's
+          // OK to be a little less performant in favor of printing a nice
+          // message.
+          for (auto &op : inst.getAllOperands()) {
+            if (!definedValues.count(op.get())) {
+              llvm::errs() << "Instruction has forward reference: ";
+              inst.dump();
+              llvm::errs() << "Note: forward referenced value is: ";
+              op.get()->dump();
+              llvm_unreachable("triggering standard assertion failure routine");
+            }
+          }
+        }
+        definedValues.insert(inst.getResults().begin(), inst.getResults().end());
+      }
+    }
+    
     // Do a traversal of the basic blocks.
     // Note that we intentionally don't verify these properties in blocks
     // that can't be reached from the entry block.
