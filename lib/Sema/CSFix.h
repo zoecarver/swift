@@ -18,6 +18,7 @@
 #define SWIFT_SEMA_CSFIX_H
 
 #include "ConstraintLocator.h"
+#include "swift/AST/ASTNode.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/Expr.h"
 #include "swift/AST/Identifier.h"
@@ -256,6 +257,13 @@ enum class FixKind : uint8_t {
   /// Allow key path root type mismatch when applying a key path that has a
   /// root type not convertible to the type of the base instance.
   AllowKeyPathRootTypeMismatch,
+
+  /// Allow key path to be bound to a function type with more than 1 argument
+  AllowMultiArgFuncKeyPathMismatch,
+  
+  /// Specify key path root type when it cannot be infered from context.
+  SpecifyKeyPathRootType,
+
 };
 
 class ConstraintFix {
@@ -313,7 +321,7 @@ public:
   /// Retrieve anchor expression associated with this fix.
   /// NOTE: such anchor comes directly from locator without
   /// any simplication attempts.
-  TypedNode getAnchor() const;
+  ASTNode getAnchor() const;
   ConstraintLocator *getLocator() const { return Locator; }
 
 protected:
@@ -1265,6 +1273,26 @@ public:
                                            ConstraintLocator *locator);
 };
 
+class AllowMultiArgFuncKeyPathMismatch final : public ConstraintFix {
+  Type functionType;
+
+  AllowMultiArgFuncKeyPathMismatch(ConstraintSystem &cs, Type fnType,
+                                   ConstraintLocator *locator)
+      : ConstraintFix(cs, FixKind::AllowMultiArgFuncKeyPathMismatch, locator),
+        functionType(fnType) {}
+
+public:
+  std::string getName() const override {
+    return "allow conversion of a keypath type to a multi-argument function";
+  }
+
+  bool diagnose(const Solution &solution, bool asNote = false) const override;
+
+  static AllowMultiArgFuncKeyPathMismatch *create(ConstraintSystem &cs,
+                                                  Type fnType,
+                                                  ConstraintLocator *locator);
+};
+
 class TreatKeyPathSubscriptIndexAsHashable final : public ConstraintFix {
   Type NonConformingType;
 
@@ -1781,7 +1809,7 @@ public:
 ///   bar[keyPath: keyPath]
 /// }
 /// \endcode
-class AllowKeyPathRootTypeMismatch : public ContextualMismatch {
+class AllowKeyPathRootTypeMismatch final : public ContextualMismatch {
 protected:
   AllowKeyPathRootTypeMismatch(ConstraintSystem &cs, Type lhs, Type rhs,
                                ConstraintLocator *locator)
@@ -1797,6 +1825,21 @@ public:
 
   static AllowKeyPathRootTypeMismatch *
   create(ConstraintSystem &cs, Type lhs, Type rhs, ConstraintLocator *locator);
+};
+
+class SpecifyKeyPathRootType final : public ConstraintFix {
+    SpecifyKeyPathRootType(ConstraintSystem &cs, ConstraintLocator *locator)
+        : ConstraintFix(cs, FixKind::SpecifyKeyPathRootType, locator) {}
+
+  public:
+    std::string getName() const {
+      return "specify key path root type";
+    }
+
+    bool diagnose(const Solution &solution, bool asNote = false) const;
+
+    static SpecifyKeyPathRootType *create(ConstraintSystem &cs,
+                                          ConstraintLocator *locator);
 };
 
 } // end namespace constraints

@@ -458,10 +458,11 @@ getGlibcModuleMapPath(SearchPathOptions& Opts, llvm::Triple triple,
   return None;
 }
 
-static void
-getNormalInvocationArguments(std::vector<std::string> &invocationArgStrs,
-                             ASTContext &ctx,
-                             const ClangImporterOptions &importerOpts) {
+void
+importer::getNormalInvocationArguments(
+    std::vector<std::string> &invocationArgStrs,
+    ASTContext &ctx,
+    const ClangImporterOptions &importerOpts) {
   const auto &LangOpts = ctx.LangOpts;
   const llvm::Triple &triple = LangOpts.Target;
   SearchPathOptions &searchPathOpts = ctx.SearchPathOpts;
@@ -695,10 +696,11 @@ getEmbedBitcodeInvocationArguments(std::vector<std::string> &invocationArgStrs,
   });
 }
 
-static void
-addCommonInvocationArguments(std::vector<std::string> &invocationArgStrs,
-                             ASTContext &ctx,
-                             const ClangImporterOptions &importerOpts) {
+void
+importer::addCommonInvocationArguments(
+    std::vector<std::string> &invocationArgStrs,
+    ASTContext &ctx,
+    const ClangImporterOptions &importerOpts) {
   using ImporterImpl = ClangImporter::Implementation;
   const llvm::Triple &triple = ctx.LangOpts.Target;
   SearchPathOptions &searchPathOpts = ctx.SearchPathOpts;
@@ -2398,7 +2400,7 @@ public:
   FilteringDeclaredDeclConsumer(swift::VisibleDeclConsumer &consumer,
                                 const ClangModuleUnit *CMU)
       : NextConsumer(consumer), ModuleFilter(CMU) {
-    assert(CMU);
+    assert(CMU && CMU->isTopLevel() && "Only top-level modules supported");
   }
 
   void foundDecl(ValueDecl *VD, DeclVisibilityKind Reason,
@@ -3155,13 +3157,8 @@ void ClangModuleUnit::lookupObjCMethods(
       (void)owner.importDecl(objcMethod->findPropertyDecl(true),
                              owner.CurrentVersion);
 
-    // Import it.
-    // FIXME: Retrying a failed import works around recursion bugs in the Clang
-    // importer.
     auto imported =
         owner.importDecl(objcMethod, owner.CurrentVersion);
-    if (!imported)
-      imported = owner.importDecl(objcMethod, owner.CurrentVersion);
     if (!imported) continue;
 
     if (auto func = dyn_cast<AbstractFunctionDecl>(imported))

@@ -1268,8 +1268,8 @@ static ArrayRef<SILArgument*> emitEntryPointIndirectReturn(
   // Map an indirect return for a type SIL considers loadable but still
   // requires an indirect return at the IR level.
   SILFunctionConventions fnConv(funcTy, IGF.getSILModule());
-  SILType directResultType =
-      IGF.CurSILFn->mapTypeIntoContext(fnConv.getSILResultType());
+  SILType directResultType = IGF.CurSILFn->mapTypeIntoContext(
+      fnConv.getSILResultType(IGF.IGM.getMaximalTypeExpansionContext()));
   if (requiresIndirectResult(directResultType)) {
     auto &paramTI = IGF.IGM.getTypeInfo(directResultType);
     auto &retTI =
@@ -1288,7 +1288,8 @@ static ArrayRef<SILArgument*> emitEntryPointIndirectReturn(
   // Map the indirect returns if present.
   unsigned numIndirectResults = fnConv.getNumIndirectSILResults();
   unsigned idx = 0;
-  for (auto indirectResultType : fnConv.getIndirectSILResultTypes()) {
+  for (auto indirectResultType : fnConv.getIndirectSILResultTypes(
+           IGF.IGM.getMaximalTypeExpansionContext())) {
     SILArgument *ret = bbargs[idx];
     auto inContextResultType =
         IGF.CurSILFn->mapTypeIntoContext(indirectResultType);
@@ -1415,9 +1416,11 @@ static void emitEntryPointArgumentsNativeCC(IRGenSILFunction &IGF,
 
     Explosion selfTemp;
     selfTemp.add(allParamValues.takeLast());
-    bindParameter(IGF, selfParam,
-                  conv.getSILArgumentType(conv.getNumSILArguments() - 1),
-                  selfTemp);
+    bindParameter(
+        IGF, selfParam,
+        conv.getSILArgumentType(conv.getNumSILArguments() - 1,
+                                IGF.IGM.getMaximalTypeExpansionContext()),
+        selfTemp);
 
     // Even if we don't have a 'self', if we have an error result, we
     // should have a placeholder argument here.
@@ -1432,7 +1435,10 @@ static void emitEntryPointArgumentsNativeCC(IRGenSILFunction &IGF,
   unsigned i = 0;
   for (SILArgument *param : params) {
     auto argIdx = conv.getSILArgIndexOfFirstParam() + i;
-    bindParameter(IGF, param, conv.getSILArgumentType(argIdx), allParamValues);
+    bindParameter(IGF, param,
+                  conv.getSILArgumentType(
+                      argIdx, IGF.IGM.getMaximalTypeExpansionContext()),
+                  allParamValues);
     ++i;
   }
 
@@ -2194,7 +2200,8 @@ emitWitnessTableForLoweredCallee(IRGenSILFunction &IGF,
                                  CanSILFunctionType substCalleeType) {
   // This use of getSelfInstanceType() assumes that the instance type is
   // always a meaningful formal type.
-  auto substSelfType = substCalleeType->getSelfInstanceType(IGF.IGM.getSILModule());
+  auto substSelfType = substCalleeType->getSelfInstanceType(
+      IGF.IGM.getSILModule(), IGF.IGM.getMaximalTypeExpansionContext());
   auto substConformance =
       substCalleeType->getWitnessMethodConformanceOrInvalid();
 
@@ -2221,8 +2228,9 @@ Callee LoweredValue::getCallee(IRGenFunction &IGF,
     // Convert a metatype 'self' argument to the ObjC class pointer.
     // FIXME: why on earth is this not correctly represented in SIL?
     if (auto metatype = dyn_cast<AnyMetatypeType>(
-       calleeInfo.OrigFnType->getSelfParameter()
-            .getArgumentType(IGF.IGM.getSILModule(), calleeInfo.OrigFnType))) {
+            calleeInfo.OrigFnType->getSelfParameter().getArgumentType(
+                IGF.IGM.getSILModule(), calleeInfo.OrigFnType,
+                IGF.IGM.getMaximalTypeExpansionContext()))) {
       selfValue = getObjCClassForValue(IGF, selfValue, metatype);
     }
 
@@ -2427,7 +2435,9 @@ void IRGenSILFunction::visitFullApplySite(FullApplySite site) {
   
   // Turn the formal SIL parameters into IR-gen things.
   for (auto index : indices(args)) {
-    emitApplyArgument(*this, args[index], origConv.getSILArgumentType(index),
+    emitApplyArgument(*this, args[index],
+                      origConv.getSILArgumentType(
+                          index, IGM.getMaximalTypeExpansionContext()),
                       llArgs);
   }
 
@@ -2467,7 +2477,8 @@ void IRGenSILFunction::visitFullApplySite(FullApplySite site) {
 
     // Load the error value.
     SILFunctionConventions substConv(substCalleeType, getSILModule());
-    SILType errorType = substConv.getSILErrorType();
+    SILType errorType =
+        substConv.getSILErrorType(IGM.getMaximalTypeExpansionContext());
     Address errorSlot = getErrorResultSlot(errorType);
     auto errorValue = Builder.CreateLoad(errorSlot);
 
@@ -2578,8 +2589,106 @@ getPartialApplicationFunction(IRGenSILFunction &IGF, SILValue v,
   llvm_unreachable("bad kind");
 }
 
+// A "simple" partial_apply is one where the argument can be directly
+// adopted as the context of the result closure.
+static bool isSimplePartialApply(IRGenFunction &IGF, PartialApplyInst *i) {
+  // The callee type must use the `method` convention.
+  auto calleeTy = i->getCallee()->getType().castTo<SILFunctionType>();
+  auto resultTy = i->getFunctionType();
+  
+  if (calleeTy->getRepresentation() != SILFunctionTypeRepresentation::Method)
+    return false;
+  
+  // There should be one applied argument.
+  // (This is a bit stricter than necessary, because empty arguments could be
+  // ignored, and for noescape closures, any amount of data less than a pointer
+  // in size can be blobbed into a single context word, but those will be
+  // handled by a simplification pass in SIL.)
+  if (i->getNumArguments() != 1)
+    return false;
+  
+  auto appliedParam = calleeTy->getParameters().back();
+  if (resultTy->isNoEscape()) {
+    // A trivial closure accepts an unowned or guaranteed argument, possibly
+    // direct or indirect.
+    switch (appliedParam.getConvention()) {
+    case ParameterConvention::Indirect_Inout:
+    case ParameterConvention::Indirect_In_Constant:
+    case ParameterConvention::Indirect_In_Guaranteed:
+    case ParameterConvention::Indirect_InoutAliasable:
+      // Indirect arguments are trivially word sized.
+      return true;
+        
+    case ParameterConvention::Direct_Guaranteed:
+    case ParameterConvention::Direct_Unowned: {
+      // Is the direct argument a single word-sized value?
+      auto argSchema = IGF.IGM.getTypeInfo(i->getArgument(0)->getType())
+                          .getSchema();
+      if (argSchema.size() != 1)
+        return false;
+        
+      if (argSchema[0].getScalarType()->getPrimitiveSizeInBits()
+            != IGF.IGM.getPointerSize().getValueInBits())
+        return false;
+      
+      return true;
+    }
+    default:
+      return false;
+    }
+  } else {
+    // An escaping closure argument's convention should match the callee
+    // convention of the result.
+    if (resultTy->getCalleeConvention() != appliedParam.getConvention()) {
+      return false;
+    }
+    assert(!isIndirectFormalParameter(resultTy->getCalleeConvention()));
+    
+    auto &argInfo = IGF.IGM.getTypeInfo(i->getArgument(0)->getType());
+    
+    if (!argInfo.isSingleSwiftRetainablePointer(ResilienceExpansion::Maximal))
+      return false;
+    
+    return true;
+  }
+}
+
 void IRGenSILFunction::visitPartialApplyInst(swift::PartialApplyInst *i) {
   SILValue v(i);
+
+  if (isSimplePartialApply(*this, i)) {
+    Explosion function;
+    
+    auto schema = IGM.getTypeInfo(v->getType()).getSchema();
+    assert(schema.size() == 2);
+    auto calleeTy = schema[0].getScalarType();
+    auto contextTy = schema[1].getScalarType();
+    
+    auto callee = getLoweredExplosion(i->getCallee());
+    auto calleeValue = callee.claimNext();
+    assert(callee.empty());
+    calleeValue = Builder.CreateBitOrPointerCast(calleeValue, calleeTy);
+    function.add(calleeValue);
+
+    Explosion context;
+    for (auto arg : i->getArguments()) {
+      auto &value = getLoweredValue(arg);
+      
+      if (value.isAddress()) {
+        context.add(value.getAnyAddress().getAddress());
+      } else {
+        getLoweredExplosion(arg, context);
+      }
+    }
+    auto contextValue = context.claimNext();
+    assert(context.empty());
+    contextValue = Builder.CreateBitOrPointerCast(contextValue, contextTy);
+    function.add(contextValue);
+    
+    setLoweredExplosion(v, function);
+    return;
+  }
+  
 
   // NB: We collect the arguments under the substituted type.
   auto args = i->getArguments();
@@ -2594,7 +2703,8 @@ void IRGenSILFunction::visitPartialApplyInst(swift::PartialApplyInst *i) {
     GenericContextScope scope(IGM,
                             i->getOrigCalleeType()->getSubstGenericSignature());
     for (auto index : indices(args)) {
-      auto paramTy = IGM.silConv.getSILType(params[index], calleeTy);
+      auto paramTy = IGM.silConv.getSILType(
+          params[index], calleeTy, IGM.getMaximalTypeExpansionContext());
       assert(args[index]->getType() == paramTy);
       emitApplyArgument(*this, args[index], paramTy, llArgs);
     }
@@ -2736,8 +2846,8 @@ static void emitReturnInst(IRGenSILFunction &IGF,
            funcLang == SILFunctionLanguage::C && "Need to handle all cases");
     SILFunctionConventions conv(IGF.CurSILFn->getLoweredFunctionType(),
                                 IGF.getSILModule());
-    auto funcResultType =
-        IGF.CurSILFn->mapTypeIntoContext(conv.getSILResultType());
+    auto funcResultType = IGF.CurSILFn->mapTypeIntoContext(
+        conv.getSILResultType(IGF.IGM.getMaximalTypeExpansionContext()));
     IGF.emitScalarReturn(resultTy, funcResultType, result, swiftCCReturn,
                          false);
   }
@@ -2796,7 +2906,10 @@ void IRGenSILFunction::visitYieldInst(swift::YieldInst *i) {
   for (auto idx : indices(yieldedValues)) {
     SILValue value = yieldedValues[idx];
     SILParameterInfo yield = yields[idx];
-    emitApplyArgument(*this, value, coroConv.getSILType(yield), values);
+    emitApplyArgument(
+        *this, value,
+        coroConv.getSILType(yield, IGM.getMaximalTypeExpansionContext()),
+        values);
   }
 
   // Emit the yield intrinsic.
@@ -3751,8 +3864,8 @@ void IRGenSILFunction::emitErrorResultVar(CanSILFunctionType FnTy,
   // swifterror in a register.
   if (IGM.IsSwiftErrorInRegister)
     return;
-  auto ErrorResultSlot = getErrorResultSlot(
-                                  IGM.silConv.getSILType(ErrorInfo, FnTy));
+  auto ErrorResultSlot = getErrorResultSlot(IGM.silConv.getSILType(
+      ErrorInfo, FnTy, IGM.getMaximalTypeExpansionContext()));
   auto Var = DbgValue->getVarInfo();
   assert(Var && "error result without debug info");
   auto Storage = emitShadowCopyIfNeeded(ErrorResultSlot.getAddress(),
@@ -3760,9 +3873,10 @@ void IRGenSILFunction::emitErrorResultVar(CanSILFunctionType FnTy,
   if (!IGM.DebugInfo)
     return;
   auto DbgTy = DebugTypeInfo::getErrorResult(
-   ErrorInfo.getReturnValueType(IGM.getSILModule(), FnTy),
-   ErrorResultSlot->getType(),
-   IGM.getPointerSize(), IGM.getPointerAlignment());
+      ErrorInfo.getReturnValueType(IGM.getSILModule(), FnTy,
+                                   IGM.getMaximalTypeExpansionContext()),
+      ErrorResultSlot->getType(), IGM.getPointerSize(),
+      IGM.getPointerAlignment());
   IGM.DebugInfo->emitVariableDeclaration(Builder, Storage, DbgTy,
                                          getDebugScope(), nullptr, *Var,
                                          IndirectValue, ArtificialValue);

@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CSFix.h"
+#include "CSDiagnostics.h"
 #include "ConstraintSystem.h"
 #include "swift/AST/ExistentialLayout.h"
 #include "swift/AST/GenericEnvironment.h"
@@ -125,7 +126,7 @@ bool constraints::doesMemberRefApplyCurriedSelf(Type baseTy,
 
 static bool areConservativelyCompatibleArgumentLabels(
     OverloadChoice choice, SmallVectorImpl<FunctionType::Param> &args,
-    bool hasTrailingClosure) {
+    Optional<unsigned> unlabeledTrailingClosureArgIndex) {
   ValueDecl *decl = nullptr;
   switch (choice.getKind()) {
   case OverloadChoiceKind::Decl:
@@ -166,7 +167,8 @@ static bool areConservativelyCompatibleArgumentLabels(
   MatchCallArgumentListener listener;
   SmallVector<ParamBinding, 8> unusedParamBindings;
 
-  return !matchCallArguments(args, params, paramInfo, hasTrailingClosure,
+  return !matchCallArguments(args, params, paramInfo,
+                             unlabeledTrailingClosureArgIndex,
                              /*allow fixes*/ false, listener,
                              unusedParamBindings);
 }
@@ -218,11 +220,13 @@ bool constraints::
 matchCallArguments(SmallVectorImpl<AnyFunctionType::Param> &args,
                    ArrayRef<AnyFunctionType::Param> params,
                    const ParameterListInfo &paramInfo,
-                   bool hasTrailingClosure,
+                   Optional<unsigned> unlabeledTrailingClosureArgIndex,
                    bool allowFixes,
                    MatchCallArgumentListener &listener,
                    SmallVectorImpl<ParamBinding> &parameterBindings) {
   assert(params.size() == paramInfo.size() && "Default map does not match");
+  assert(!unlabeledTrailingClosureArgIndex ||
+         *unlabeledTrailingClosureArgIndex < args.size());
 
   // Keep track of the parameter we're matching and what argument indices
   // got bound to each parameter.
@@ -429,58 +433,123 @@ matchCallArguments(SmallVectorImpl<AnyFunctionType::Param> &args,
     haveUnfulfilledParams = true;
   };
 
-  // If we have a trailing closure, it maps to the last parameter.
-  if (hasTrailingClosure && numParams > 0) {
-    unsigned lastParamIdx = numParams - 1;
-    bool lastAcceptsTrailingClosure =
-        acceptsTrailingClosure(params[lastParamIdx]);
+  // If we have an unlabeled trailing closure, we match trailing closure
+  // labels from the end, then match the trailing closure arg.
+  if (unlabeledTrailingClosureArgIndex) {
+    unsigned unlabeledArgIdx = *unlabeledTrailingClosureArgIndex;
 
-    // If the last parameter is defaulted, this might be
-    // an attempt to use a trailing closure with previous
-    // parameter that accepts a function type e.g.
-    //
-    // func foo(_: () -> Int, _ x: Int = 0) {}
-    // foo { 42 }
-    if (!lastAcceptsTrailingClosure && numParams > 1 &&
-        paramInfo.hasDefaultArgument(lastParamIdx)) {
-      auto paramType = params[lastParamIdx - 1].getPlainType();
-      // If the parameter before defaulted last accepts.
-      if (paramType->is<AnyFunctionType>()) {
-        lastAcceptsTrailingClosure = true;
-        lastParamIdx -= 1;
+    // One past the next parameter index to look at.
+    unsigned prevParamIdx = numParams;
+
+    // Scan backwards to match any labeled trailing closures.
+    for (unsigned argIdx = numArgs - 1; argIdx != unlabeledArgIdx; --argIdx) {
+      bool claimed = false;
+
+      // We do this scan on a copy of prevParamIdx so that, if it fails,
+      // we'll restart at this same point for the next trailing closure.
+      unsigned prevParamIdxForArg = prevParamIdx;
+      while (prevParamIdxForArg > 0) {
+        prevParamIdxForArg -= 1;
+        unsigned paramIdx = prevParamIdxForArg;
+
+        // Check for an exact label match.
+        const auto &param = params[paramIdx];
+        if (param.getLabel() == args[argIdx].getLabel()) {
+          parameterBindings[paramIdx].push_back(argIdx);
+          claim(param.getLabel(), argIdx);
+
+          // Future arguments should search prior to this parameter.
+          prevParamIdx = prevParamIdxForArg;
+          claimed = true;
+          break;
+        }
+      }
+
+      // If we ran out of parameters, there's no match for this argument.
+      // TODO: somehow fall through to report out-of-order arguments?
+      if (!claimed) {
+        if (listener.extraArgument(argIdx))
+          return true;
       }
     }
 
-    bool isExtraClosure = false;
-    // If there is no suitable last parameter to accept the trailing closure,
+    // Okay, we've matched all the labeled closures; scan backwards from
+    // there to match the unlabeled trailing closure.
+    Optional<unsigned> unlabeledParamIdx;
+    if (prevParamIdx > 0) {
+      unsigned paramIdx = prevParamIdx - 1;
+
+      bool lastAcceptsTrailingClosure =
+          acceptsTrailingClosure(params[paramIdx]);
+
+      // If the last parameter is defaulted, this might be
+      // an attempt to use a trailing closure with previous
+      // parameter that accepts a function type e.g.
+      //
+      // func foo(_: () -> Int, _ x: Int = 0) {}
+      // foo { 42 }
+      //
+      // FIXME: shouldn't this skip multiple arguments and look for
+      // something that acceptsTrailingClosure rather than just something
+      // with a function type?
+      if (!lastAcceptsTrailingClosure && paramIdx > 0 &&
+          paramInfo.hasDefaultArgument(paramIdx)) {
+        auto paramType = params[paramIdx - 1].getPlainType();
+        // If the parameter before defaulted last accepts.
+        if (paramType->is<AnyFunctionType>()) {
+          lastAcceptsTrailingClosure = true;
+          paramIdx -= 1;
+        }
+      }
+
+      if (lastAcceptsTrailingClosure)
+        unlabeledParamIdx = paramIdx;
+    }
+
+    // If there's no suitable last parameter to accept the trailing closure,
     // notify the listener and bail if we need to.
-    if (!lastAcceptsTrailingClosure) {
-      if (numArgs > numParams) {
+    if (!unlabeledParamIdx) {
+      // Try to use a specialized diagnostic for an extra closure.
+      bool isExtraClosure = false;
+      if (prevParamIdx == 0) {
+        isExtraClosure = true;
+      } else if (unlabeledArgIdx > 0) {
         // Argument before the trailing closure.
-        unsigned prevArg = numArgs - 2;
+        unsigned prevArg = unlabeledArgIdx - 1;
         auto &arg = args[prevArg];
         // If the argument before trailing closure matches
         // last parameter, this is just a special case of
         // an extraneous argument.
-        const auto param = params[numParams - 1];
+        const auto param = params[prevParamIdx - 1];
         if (param.hasLabel() && param.getLabel() == arg.getLabel()) {
           isExtraClosure = true;
-          if (listener.extraArgument(numArgs - 1))
-            return true;
         }
       }
 
-      if (!isExtraClosure &&
-          listener.trailingClosureMismatch(lastParamIdx, numArgs - 1))
-        return true;
+      if (isExtraClosure) {
+        if (listener.extraArgument(unlabeledArgIdx))
+          return true;
+      } else {
+        if (listener.trailingClosureMismatch(prevParamIdx - 1,
+                                             unlabeledArgIdx))
+          return true;
+      }
+
+      if (isExtraClosure) {
+        // Claim the unlabeled trailing closure without an associated
+        // parameter to suppress further complaints about it.
+        claim(Identifier(), unlabeledArgIdx, /*ignoreNameClash=*/true);
+      } else {
+        unlabeledParamIdx = prevParamIdx - 1;
+      }
     }
 
-    // Claim the parameter/argument pair.
-    claim(params[lastParamIdx].getLabel(), numArgs - 1,
-          /*ignoreNameClash=*/true);
-    // Let's claim the trailing closure unless it's an extra argument.
-    if (!isExtraClosure)
-      parameterBindings[lastParamIdx].push_back(numArgs - 1);
+    if (unlabeledParamIdx) {
+      // Claim the parameter/argument pair.
+      claim(params[*unlabeledParamIdx].getLabel(), unlabeledArgIdx,
+            /*ignoreNameClash=*/true);
+      parameterBindings[*unlabeledParamIdx].push_back(unlabeledArgIdx);
+    }
   }
 
   {
@@ -1037,7 +1106,8 @@ ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
     ArgumentFailureTracker listener(cs, argsWithLabels, params,
                                     parameterBindings, locator);
     if (constraints::matchCallArguments(
-            argsWithLabels, params, paramInfo, argInfo->HasTrailingClosure,
+            argsWithLabels, params, paramInfo,
+            argInfo->UnlabeledTrailingClosureIndex,
             cs.shouldAttemptFixes(), listener, parameterBindings))
       return cs.getTypeMatchFailure(locator);
 
@@ -1353,7 +1423,7 @@ static bool isSingleTupleParam(ASTContext &ctx,
 }
 
 static ConstraintFix *fixRequirementFailure(ConstraintSystem &cs, Type type1,
-                                            Type type2, TypedNode anchor,
+                                            Type type2, ASTNode anchor,
                                             ArrayRef<LocatorPathElt> path);
 
 static ConstraintFix *fixRequirementFailure(ConstraintSystem &cs, Type type1,
@@ -1444,7 +1514,7 @@ assessRequirementFailureImpact(ConstraintSystem &cs, Type requirementType,
 
 /// Attempt to fix missing arguments by introducing type variables
 /// and inferring their types from parameters.
-static bool fixMissingArguments(ConstraintSystem &cs, TypedNode anchor,
+static bool fixMissingArguments(ConstraintSystem &cs, ASTNode anchor,
                                 SmallVectorImpl<AnyFunctionType::Param> &args,
                                 ArrayRef<AnyFunctionType::Param> params,
                                 unsigned numMissing,
@@ -2562,7 +2632,7 @@ ConstraintSystem::matchTypesBindTypeVar(
 }
 
 static ConstraintFix *fixRequirementFailure(ConstraintSystem &cs, Type type1,
-                                            Type type2, TypedNode anchor,
+                                            Type type2, ASTNode anchor,
                                             ArrayRef<LocatorPathElt> path) {
   // Can't fix not yet properly resolved types.
   if (type1->isTypeVariableOrMember() || type2->isTypeVariableOrMember())
@@ -2602,6 +2672,11 @@ static ConstraintFix *fixPropertyWrapperFailure(
     ConstraintSystem &cs, Type baseTy, ConstraintLocator *locator,
     llvm::function_ref<bool(SelectedOverload, VarDecl *, Type)> attemptFix,
     Optional<Type> toType = None) {
+  // Don't attempt this fix if this is a key path dynamic member
+  // lookup which produced no results. Unwrapping or wrapping
+  // the base type is not going to produce desired results.
+  if (locator->isForKeyPathDynamicMemberLookup())
+    return nullptr;
 
   Expr *baseExpr = nullptr;
   if (auto *anchor = getAsExpr(locator->getAnchor())) {
@@ -2900,7 +2975,7 @@ static bool repairOutOfOrderArgumentsInBinaryFunction(
 
   bool isOperatorRef = overload->choice.getDecl()->isOperator();
 
-  auto matchArgToParam = [&](Type argType, Type paramType, TypedNode anchor) {
+  auto matchArgToParam = [&](Type argType, Type paramType, ASTNode anchor) {
     auto *loc = cs.getConstraintLocator(anchor);
     // If argument (and/or parameter) is a generic type let's not even try this
     // fix because it would be impossible to match given types  without delaying
@@ -2969,7 +3044,7 @@ bool ConstraintSystem::repairFailures(
     // explicit call.
     if (fnType->getNumParams() > 0) {
       auto anchor = simplifyLocatorToAnchor(getConstraintLocator(locator));
-      if (!anchor.is<const Expr *>())
+      if (!anchor.is<Expr *>())
         return false;
 
       auto overload = findSelectedOverloadFor(getAsExpr(anchor));
@@ -3035,9 +3110,15 @@ bool ConstraintSystem::repairFailures(
       // position (which doesn't require explicit `&`) decays into
       // a `Bind` of involved object types, same goes for explicit
       // `&` conversion from l-value to inout type.
+      //
+      // In case of regular argument conversion although explicit `&`
+      // is required we still want to diagnose the problem as one
+      // about mutability instead of suggesting to add `&` which wouldn't
+      // be correct.
       auto kind = (isExpr<InOutExpr>(anchor) ||
                    (rhs->is<InOutType>() &&
-                    matchKind == ConstraintKind::OperatorArgumentConversion))
+                    (matchKind == ConstraintKind::ArgumentConversion ||
+                     matchKind == ConstraintKind::OperatorArgumentConversion)))
                       ? ConstraintKind::Bind
                       : matchKind;
 
@@ -4387,34 +4468,22 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
       auto meta1 = cast<AnyMetatypeType>(desugar1);
       auto meta2 = cast<AnyMetatypeType>(desugar2);
 
-      auto instanceType1 = meta1->getInstanceType();
-      auto instanceType2 = meta2->getInstanceType();
-
       // A.Type < B.Type if A < B and both A and B are classes.
       // P.Type < Q.Type if P < Q, both P and Q are protocols, and P.Type
-      // and Q.Type are both existential metatypes.
-      auto getSubKind = [&]() -> ConstraintKind {
-        auto subKind = std::min(kind, ConstraintKind::Subtype);
-
-        // If we have existential metatypes, we need to perform subtyping.
-        if (!isa<MetatypeType>(meta1))
-          return subKind;
-
-        // If the LHS cannot be a type with a superclass, we can perform a bind.
-        if (!instanceType1->isTypeVariableOrMember() &&
-            !instanceType1->mayHaveSuperclass())
-          return ConstraintKind::Bind;
-
-        // If the RHS cannot be a class type, we can perform a bind.
-        if (!instanceType2->isTypeVariableOrMember() &&
-            !instanceType2->getClassOrBoundGenericClass())
-          return ConstraintKind::Bind;
-
-        return subKind;
-      };
+      // and Q.Type are both existential metatypes
+      auto subKind = std::min(kind, ConstraintKind::Subtype);
+      // If instance types can't have a subtype relationship
+      // it means that such types can be simply equated.
+      auto instanceType1 = meta1->getInstanceType();
+      auto instanceType2 = meta2->getInstanceType();
+      if (isa<MetatypeType>(meta1) &&
+          !(instanceType1->mayHaveSuperclass() &&
+            instanceType2->getClassOrBoundGenericClass())) {
+        subKind = ConstraintKind::Bind;
+      }
 
       auto result =
-          matchTypes(instanceType1, instanceType2, getSubKind(), subflags,
+          matchTypes(instanceType1, instanceType2, subKind, subflags,
                      locator.withPathElement(ConstraintLocator::InstanceType));
 
       // If matching of the instance types resulted in the failure make sure
@@ -5179,8 +5248,7 @@ ConstraintSystem::SolutionKind ConstraintSystem::simplifyConformsToConstraint(
   switch (kind) {
   case ConstraintKind::SelfObjectOfProtocol: {
     auto conformance = TypeChecker::containsProtocol(
-        type, protocol, DC,
-         ConformanceCheckFlags::SkipConditionalRequirements);
+        type, protocol, DC, /*skipConditionalRequirements=*/true);
     if (conformance) {
       return recordConformance(conformance);
     }
@@ -5188,9 +5256,8 @@ ConstraintSystem::SolutionKind ConstraintSystem::simplifyConformsToConstraint(
   case ConstraintKind::ConformsTo:
   case ConstraintKind::LiteralConformsTo: {
     // Check whether this type conforms to the protocol.
-    auto conformance = TypeChecker::conformsToProtocol(
-        type, protocol, DC,
-         ConformanceCheckFlags::SkipConditionalRequirements);
+    auto conformance = DC->getParentModule()->lookupConformance(
+        type, protocol);
     if (conformance) {
       return recordConformance(conformance);
     }
@@ -6304,7 +6371,7 @@ static ConstraintFix *validateInitializerRef(ConstraintSystem &cs,
   if (!anchor)
     return nullptr;
 
-  auto getType = [&cs](const Expr *expr) -> Type {
+  auto getType = [&cs](Expr *expr) -> Type {
     return cs.simplifyType(cs.getType(expr))->getRValueType();
   };
 
@@ -6869,9 +6936,8 @@ ConstraintSystem::simplifyValueWitnessConstraint(
   // conformance already?
   auto proto = requirement->getDeclContext()->getSelfProtocolDecl();
   assert(proto && "Value witness constraint for a non-requirement");
-  auto conformance = TypeChecker::conformsToProtocol(
-      baseObjectType, proto, useDC,
-       ConformanceCheckFlags::SkipConditionalRequirements);
+  auto conformance = useDC->getParentModule()->lookupConformance(
+      baseObjectType, proto);
   if (!conformance) {
     // The conformance failed, so mark the member type as a "hole". We cannot
     // do anything further here.
@@ -7081,14 +7147,11 @@ bool ConstraintSystem::resolveClosure(TypeVariableType *typeVar,
         closureType->getResult(),
         getConstraintLocator(closure, LocatorPathElt::ClosureBody(hasReturn)));
   } else if (!hasReturn) {
-    bool hasExplicitResult = closure->hasExplicitResultType() &&
-                             closure->getExplicitResultTypeLoc().getType();
-
     // If this closure has an empty body and no explicit result type
     // let's bind result type to `Void` since that's the only type empty body
     // can produce. Otherwise, if (multi-statement) closure doesn't have
     // an explicit result (no `return` statements) let's default it to `Void`.
-    auto constraintKind = (closure->hasEmptyBody() && !hasExplicitResult)
+    auto constraintKind = (closure->hasEmptyBody() && !closure->hasExplicitResultType())
                               ? ConstraintKind::Bind
                               : ConstraintKind::Defaultable;
     addConstraint(
@@ -7539,10 +7602,10 @@ ConstraintSystem::simplifyKeyPathConstraint(
   auto subflags = getDefaultDecompositionOptions(flags);
   // The constraint ought to have been anchored on a KeyPathExpr.
   auto keyPath = castToExpr<KeyPathExpr>(locator.getBaseLocator()->getAnchor());
-
   keyPathTy = getFixedTypeRecursive(keyPathTy, /*want rvalue*/ true);
   bool definitelyFunctionType = false;
   bool definitelyKeyPathType = false;
+  bool resolveAsMultiArgFuncFix = false;
 
   auto tryMatchRootAndValueFromType = [&](Type type,
                                           bool allowPartial = true) -> bool {
@@ -7567,10 +7630,18 @@ ConstraintSystem::simplifyKeyPathConstraint(
     }
 
     if (auto fnTy = type->getAs<FunctionType>()) {
-      definitelyFunctionType = true;
+      if (fnTy->getParams().size() != 1) {
+        if (!shouldAttemptFixes())
+          return false;
 
-      if (fnTy->getParams().size() != 1)
-        return false;
+        resolveAsMultiArgFuncFix = true;
+        auto *fix = AllowMultiArgFuncKeyPathMismatch::create(
+            *this, fnTy, locator.getBaseLocator());
+        // Pretend the keypath type got resolved and move on.
+        return !recordFix(fix);
+      }
+
+      definitelyFunctionType = true;
 
       // Match up the root and value types to the function's param and return
       // types. Note that we're using the type of the parameter as referenced
@@ -7592,6 +7663,12 @@ ConstraintSystem::simplifyKeyPathConstraint(
 
     return true;
   };
+  
+  // We have a hole, the solver can't infer the key path type. So let's
+  // just assume this is solved.
+  if (shouldAttemptFixes() && keyPathTy->isHole()) {
+    return SolutionKind::Solved;
+  }
 
   // If we're fixed to a bound generic type, trying harvesting context from it.
   // However, we don't want a solution that fixes the expression type to
@@ -7604,6 +7681,10 @@ ConstraintSystem::simplifyKeyPathConstraint(
     if (!tryMatchRootAndValueFromType(contextualTy))
       return SolutionKind::Error;
   }
+
+  // If we fix this keypath as `AllowMultiArgFuncKeyPathMismatch`, just proceed
+  if (resolveAsMultiArgFuncFix)
+    return SolutionKind::Solved;
 
   // See if we resolved overloads for all the components involved.
   enum {
@@ -7769,7 +7850,7 @@ ConstraintSystem::simplifyKeyPathConstraint(
   } else if (!anyComponentsUnresolved ||
              (definitelyKeyPathType && capability == ReadOnly)) {
     auto resolvedKPTy =
-        BoundGenericType::get(kpDecl, nullptr, {rootTy, valueTy});
+      BoundGenericType::get(kpDecl, nullptr, {rootTy, valueTy});
     return matchTypes(keyPathTy, resolvedKPTy, ConstraintKind::Bind, subflags,
                       loc);
   } else {
@@ -8000,7 +8081,8 @@ retry_after_fail:
           FunctionType::relabelParams(argsWithLabels, argumentInfo->Labels);
 
           if (!areConservativelyCompatibleArgumentLabels(
-                  choice, argsWithLabels, argumentInfo->HasTrailingClosure)) {
+                  choice, argsWithLabels,
+                  argumentInfo->UnlabeledTrailingClosureIndex)) {
             labelMismatch = true;
             return false;
           }
@@ -9220,7 +9302,7 @@ bool ConstraintSystem::recordFix(ConstraintFix *fix, unsigned impact) {
   // Only useful to record if no pre-existing fix is associated with
   // current anchor or, in case of anchor being an expression, any of
   // its sub-expressions.
-  llvm::SmallDenseSet<TypedNode> anchors;
+  llvm::SmallDenseSet<ASTNode> anchors;
   for (const auto *fix : Fixes)
     anchors.insert(fix->getAnchor());
 
@@ -9406,7 +9488,8 @@ ConstraintSystem::SolutionKind ConstraintSystem::simplifyFixConstraint(
   case FixKind::CoerceToCheckedCast:
   case FixKind::SpecifyObjectLiteralTypeImport:
   case FixKind::AllowKeyPathRootTypeMismatch:
-  case FixKind::AllowCoercionToForceCast: {
+  case FixKind::AllowCoercionToForceCast:
+  case FixKind::SpecifyKeyPathRootType: {
     return recordFix(fix) ? SolutionKind::Error : SolutionKind::Solved;
   }
 
@@ -9498,6 +9581,7 @@ ConstraintSystem::SolutionKind ConstraintSystem::simplifyFixConstraint(
   case FixKind::AllowClosureParameterDestructuring:
   case FixKind::AllowInaccessibleMember:
   case FixKind::AllowAnyObjectKeyPathRoot:
+  case FixKind::AllowMultiArgFuncKeyPathMismatch:
   case FixKind::TreatKeyPathSubscriptIndexAsHashable:
   case FixKind::AllowInvalidRefInKeyPath:
   case FixKind::DefaultGenericArgument:

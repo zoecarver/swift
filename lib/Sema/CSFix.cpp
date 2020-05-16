@@ -34,7 +34,7 @@ using namespace constraints;
 
 ConstraintFix::~ConstraintFix() {}
 
-TypedNode ConstraintFix::getAnchor() const { return getLocator()->getAnchor(); }
+ASTNode ConstraintFix::getAnchor() const { return getLocator()->getAnchor(); }
 
 void ConstraintFix::print(llvm::raw_ostream &Out) const {
   Out << "[fix: ";
@@ -723,6 +723,19 @@ AllowAnyObjectKeyPathRoot::create(ConstraintSystem &cs,
   return new (cs.getAllocator()) AllowAnyObjectKeyPathRoot(cs, locator);
 }
 
+bool AllowMultiArgFuncKeyPathMismatch::diagnose(const Solution &solution,
+                                                bool asNote) const {
+  MultiArgFuncKeyPathFailure failure(solution, functionType, getLocator());
+  return failure.diagnose(asNote);
+}
+
+AllowMultiArgFuncKeyPathMismatch *
+AllowMultiArgFuncKeyPathMismatch::create(ConstraintSystem &cs, Type fnType,
+                                         ConstraintLocator *locator) {
+  return new (cs.getAllocator())
+  AllowMultiArgFuncKeyPathMismatch(cs, fnType, locator);
+}
+
 bool TreatKeyPathSubscriptIndexAsHashable::diagnose(const Solution &solution,
                                                     bool asNote) const {
   KeyPathSubscriptIndexHashableFailure failure(solution, NonConformingType,
@@ -1309,4 +1322,18 @@ AllowKeyPathRootTypeMismatch::create(ConstraintSystem &cs, Type lhs, Type rhs,
                                      ConstraintLocator *locator) {
   return new (cs.getAllocator())
       AllowKeyPathRootTypeMismatch(cs, lhs, rhs, locator);
+}
+
+SpecifyKeyPathRootType *
+SpecifyKeyPathRootType::create(ConstraintSystem &cs,
+                               ConstraintLocator *locator) {
+  return new (cs.getAllocator())
+      SpecifyKeyPathRootType(cs, locator);
+}
+
+bool SpecifyKeyPathRootType::diagnose(const Solution &solution,
+                                      bool asNote) const {
+  UnableToInferKeyPathRootFailure failure(solution, getLocator());
+  
+  return failure.diagnose(asNote);
 }

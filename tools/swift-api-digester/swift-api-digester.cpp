@@ -27,6 +27,7 @@
 // the output of api-digester will include such changes.
 
 #include "swift/Frontend/PrintingDiagnosticConsumer.h"
+#include "swift/Frontend/SerializedDiagnosticConsumer.h"
 #include "swift/AST/DiagnosticsModuleDiffer.h"
 #include "swift/IDE/APIDigesterData.h"
 #include <functional>
@@ -257,6 +258,12 @@ static llvm::cl::opt<bool>
 UseEmptyBaseline("empty-baseline",
                 llvm::cl::desc("Use empty baseline for diagnostics"),
                 llvm::cl::cat(Category));
+
+static llvm::cl::opt<std::string>
+SerializedDiagPath("serialize-diagnostics-path",
+                   llvm::cl::desc("Serialize diagnostics to a path"),
+                   llvm::cl::cat(Category));
+
 } // namespace options
 
 namespace {
@@ -1138,6 +1145,8 @@ public:
     // Decls with @_alwaysEmitIntoClient aren't required to have an
     // @available attribute.
     if (!Ctx.getOpts().SkipOSCheck &&
+        DeclAttribute::canAttributeAppearOnDeclKind(DeclAttrKind::DAK_Available,
+                                                    D->getDeclKind()) &&
         !D->getIntroducingVersion().hasOSAvailability() &&
         !D->hasDeclAttribute(DeclAttrKind::DAK_AlwaysEmitIntoClient)) {
       D->emitDiag(D->getLoc(), diag::new_decl_without_intro);
@@ -2284,6 +2293,20 @@ static void findTypeMemberDiffs(NodePtr leftSDKRoot, NodePtr rightSDKRoot,
   }
 }
 
+static std::unique_ptr<DiagnosticConsumer>
+createDiagConsumer(llvm::raw_ostream &OS, bool &FailOnError) {
+  if (!options::SerializedDiagPath.empty()) {
+    FailOnError = true;
+    return serialized_diagnostics::createConsumer(options::SerializedDiagPath);
+  } else if (options::CompilerStyleDiags) {
+    FailOnError = true;
+    return std::make_unique<PrintingDiagnosticConsumer>();
+  } else {
+    FailOnError = false;
+    return std::make_unique<ModuleDifferDiagsConsumer>(true, OS);
+  }
+}
+
 static int diagnoseModuleChange(SDKContext &Ctx, SDKNodeRoot *LeftModule,
                              SDKNodeRoot *RightModule, StringRef OutputPath,
                              llvm::StringSet<> ProtocolReqWhitelist) {
@@ -2300,9 +2323,9 @@ static int diagnoseModuleChange(SDKContext &Ctx, SDKNodeRoot *LeftModule,
     FileOS.reset(new llvm::raw_fd_ostream(OutputPath, EC, llvm::sys::fs::F_None));
     OS = FileOS.get();
   }
-  std::unique_ptr<DiagnosticConsumer> pConsumer = options::CompilerStyleDiags ?
-    std::make_unique<PrintingDiagnosticConsumer>():
-    std::make_unique<ModuleDifferDiagsConsumer>(true, *OS);
+  bool FailOnError;
+  std::unique_ptr<DiagnosticConsumer> pConsumer =
+    createDiagConsumer(*OS, FailOnError);
 
   Ctx.addDiagConsumer(*pConsumer);
   Ctx.setCommonVersion(std::min(LeftModule->getJsonFormatVersion(),
@@ -2316,7 +2339,7 @@ static int diagnoseModuleChange(SDKContext &Ctx, SDKNodeRoot *LeftModule,
   // Find member hoist changes to help refine diagnostics.
   findTypeMemberDiffs(LeftModule, RightModule, Ctx.getTypeMemberDiffs());
   DiagnosisEmitter::diagnosis(LeftModule, RightModule, Ctx);
-  return options::CompilerStyleDiags && Ctx.getDiags().hadAnyError() ? 1 : 0;
+  return FailOnError && Ctx.getDiags().hadAnyError() ? 1 : 0;
 }
 
 static int diagnoseModuleChange(StringRef LeftPath, StringRef RightPath,

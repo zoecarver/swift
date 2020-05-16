@@ -887,9 +887,14 @@ ParserResult<Pattern> Parser::parseTypedPattern() {
     SyntaxParsingContext TypeAnnoCtx(SyntaxContext, SyntaxKind::TypeAnnotation);
     SourceLoc colonLoc = consumeToken(tok::colon);
     
-    if (result.isNull())  // Recover by creating AnyPattern.
-      result = makeParserErrorResult(new (Context) AnyPattern(colonLoc));
-    
+    if (result.isNull()) {
+      // Recover by creating AnyPattern.
+      auto *AP = new (Context) AnyPattern(colonLoc);
+      if (colonLoc.isInvalid())
+        AP->setImplicit();
+      result = makeParserErrorResult(AP);
+    }
+
     ParserResult<TypeRepr> Ty = parseDeclResultType(diag::expected_type);
     if (Ty.hasCodeCompletion())
       return makeParserCodeCompletionResult<Pattern>();
@@ -912,13 +917,13 @@ ParserResult<Pattern> Parser::parseTypedPattern() {
         SmallVector<Expr *, 2> args;
         SmallVector<Identifier, 2> argLabels;
         SmallVector<SourceLoc, 2> argLabelLocs;
-        Expr *trailingClosure;
+        SmallVector<TrailingClosure, 2> trailingClosures;
         ParserStatus status = parseExprList(tok::l_paren, tok::r_paren,
                                             /*isPostfix=*/true,
                                             /*isExprBasic=*/false,
                                             lParenLoc, args, argLabels,
                                             argLabelLocs, rParenLoc,
-                                            trailingClosure,
+                                            trailingClosures,
                                             SyntaxKind::Unknown);
         if (status.isSuccess()) {
           backtrack.cancelBacktrack();
@@ -968,7 +973,7 @@ ParserResult<Pattern> Parser::parsePattern() {
       auto VD = new (Context) VarDecl(
         /*IsStatic*/false, introducer, /*IsCaptureList*/false,
         consumeToken(tok::kw__), Identifier(), CurDeclContext);
-      return makeParserResult(new (Context) NamedPattern(VD, /*implicit*/true));
+      return makeParserResult(NamedPattern::createImplicit(Context, VD));
     }
     PatternCtx.setCreateSyntax(SyntaxKind::WildcardPattern);
     return makeParserResult(new (Context) AnyPattern(consumeToken(tok::kw__)));
@@ -1149,6 +1154,10 @@ parseOptionalPatternTypeAnnotation(ParserResult<Pattern> result,
 
   // In an if-let, the actual type of the expression is Optional of whatever
   // was written.
+  // FIXME: This is not good, `TypeRepr`s are supposed to represent what the
+  // user actually wrote in source (that's why they don't have any `isImplicit`
+  // bit). This synthesized `OptionalTypeRepr` leads to workarounds in other
+  // parts where we want to reason about the types as perceived by the user.
   if (isOptional)
     repr = new (Context) OptionalTypeRepr(repr, SourceLoc());
 

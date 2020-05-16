@@ -406,6 +406,23 @@ PropertyWrapperTypeInfoRequest::evaluate(
     }
   }
 
+  bool hasInvalidDynamicSelf = false;
+  if (result.projectedValueVar &&
+      result.projectedValueVar->getValueInterfaceType()->hasDynamicSelfType()) {
+    result.projectedValueVar->diagnose(
+        diag::property_wrapper_dynamic_self_type, /*projectedValue=*/true);
+    hasInvalidDynamicSelf = true;
+  }
+
+  if (result.valueVar->getValueInterfaceType()->hasDynamicSelfType()) {
+    result.valueVar->diagnose(
+        diag::property_wrapper_dynamic_self_type, /*projectedValue=*/false);
+    hasInvalidDynamicSelf = true;
+  }
+
+  if (hasInvalidDynamicSelf)
+    return PropertyWrapperTypeInfo();
+
   return result;
 }
 
@@ -539,14 +556,12 @@ Type AttachedPropertyWrapperTypeRequest::evaluate(Evaluator &evaluator,
   if (!customAttr)
     return Type();
 
-  auto resolution =
-      TypeResolution::forContextual(var->getDeclContext());
   TypeResolutionOptions options(TypeResolverContext::PatternBindingDecl);
   options |= TypeResolutionFlags::AllowUnboundGenerics;
 
-  if (TypeChecker::validateType(var->getASTContext(),
-                                customAttr->getTypeLoc(),
-                                resolution, options)) {
+  auto resolution =
+      TypeResolution::forContextual(var->getDeclContext(), options);
+  if (TypeChecker::validateType(customAttr->getTypeLoc(), resolution)) {
     return ErrorType::get(var->getASTContext());
   }
 
@@ -732,10 +747,10 @@ Expr *swift::buildPropertyWrapperWrappedValueCall(
       if (endLoc.isInvalid() && startLoc.isValid())
         endLoc = wrapperAttrs[i]->getTypeLoc().getSourceRange().End;
 
-      auto *init = CallExpr::create(
-         ctx, typeExpr, startLoc, {initializer}, {argName},
-         {initializer->getStartLoc()}, endLoc,
-         nullptr, /*implicit=*/true);
+      auto *init =
+          CallExpr::create(ctx, typeExpr, startLoc, {initializer}, {argName},
+                           {initializer->getStartLoc()}, endLoc,
+                           /*trailingClosures=*/{}, /*implicit=*/true);
       initializer = init;
 
       if (!innermostInit)
@@ -768,9 +783,9 @@ Expr *swift::buildPropertyWrapperWrappedValueCall(
     if (endLoc.isInvalid() && startLoc.isValid())
       endLoc = wrapperAttrs[i]->getTypeLoc().getSourceRange().End;
 
-    auto *init = CallExpr::create(
-        ctx, typeExpr, startLoc, elements, elementNames, elementLocs,
-        endLoc, nullptr, /*implicit=*/true);
+    auto *init = CallExpr::create(ctx, typeExpr, startLoc, elements,
+                                   elementNames, elementLocs, endLoc,
+                                   /*trailingClosures=*/{}, /*implicit=*/true);
     initializer = init;
 
     if (!innermostInit)

@@ -320,10 +320,6 @@ public:
 
   SourceLoc EndTypeCheckLoc;
 
-  /// Used to check for discarded expression values: in the REPL top-level
-  /// expressions are not discarded.
-  bool IsREPL;
-
   /// Used to distinguish the first BraceStmt that starts a TopLevelCodeDecl.
   bool IsBraceStmtFromTopLevelDecl;
 
@@ -369,20 +365,16 @@ public:
   };
 
   StmtChecker(AbstractFunctionDecl *AFD)
-      : Ctx(AFD->getASTContext()), TheFunc(AFD), DC(AFD), IsREPL(false),
+      : Ctx(AFD->getASTContext()), TheFunc(AFD), DC(AFD),
         IsBraceStmtFromTopLevelDecl(false) {}
 
   StmtChecker(ClosureExpr *TheClosure)
       : Ctx(TheClosure->getASTContext()), TheFunc(TheClosure),
-        DC(TheClosure), IsREPL(false), IsBraceStmtFromTopLevelDecl(false) {}
+        DC(TheClosure), IsBraceStmtFromTopLevelDecl(false) {}
 
   StmtChecker(DeclContext *DC)
-      : Ctx(DC->getASTContext()), TheFunc(), DC(DC), IsREPL(false),
+      : Ctx(DC->getASTContext()), TheFunc(), DC(DC),
         IsBraceStmtFromTopLevelDecl(false) {
-    if (const SourceFile *SF = DC->getParentSourceFile())
-      if (SF->Kind == SourceFileKind::REPL)
-        IsREPL = true;
-
     IsBraceStmtFromTopLevelDecl = isa<TopLevelCodeDecl>(DC);
   }
 
@@ -524,7 +516,7 @@ public:
     }
 
     auto exprTy = TypeChecker::typeCheckExpression(E, DC,
-                                                   TypeLoc::withoutLoc(ResultTy),
+                                                   ResultTy,
                                                    ctp, options);
     RS->setResult(E);
 
@@ -585,7 +577,7 @@ public:
       }
 
       TypeChecker::typeCheckExpression(exprToCheck, DC,
-                                       TypeLoc::withoutLoc(contextType),
+                                       contextType,
                                        contextTypePurpose);
 
       // Propagate the change into the inout expression we stripped before.
@@ -608,7 +600,7 @@ public:
     Type exnType = getASTContext().getErrorDecl()->getDeclaredType();
     if (!exnType) return TS;
 
-    TypeChecker::typeCheckExpression(E, DC, TypeLoc::withoutLoc(exnType),
+    TypeChecker::typeCheckExpression(E, DC, exnType,
                                      CTP_ThrowStmt);
     TS->setSubExpr(E);
     
@@ -1579,9 +1571,8 @@ Stmt *StmtChecker::visitBraceStmt(BraceStmt *BS) {
 
       // Type check the expression.
       TypeCheckExprOptions options = TypeCheckExprFlags::IsExprStmt;
-      bool isDiscarded = !(IsREPL && isa<TopLevelCodeDecl>(DC))
-        && !getASTContext().LangOpts.Playground
-        && !getASTContext().LangOpts.DebuggerSupport;
+      bool isDiscarded = (!getASTContext().LangOpts.Playground &&
+                          !getASTContext().LangOpts.DebuggerSupport);
       if (isDiscarded)
         options |= TypeCheckExprFlags::IsDiscarded;
 
@@ -1592,7 +1583,7 @@ Stmt *StmtChecker::visitBraceStmt(BraceStmt *BS) {
       }
 
       auto resultTy =
-          TypeChecker::typeCheckExpression(SubExpr, DC, TypeLoc(),
+          TypeChecker::typeCheckExpression(SubExpr, DC, Type(),
                                            CTP_Unused, options);
 
       // If a closure expression is unused, the user might have intended
@@ -1673,7 +1664,7 @@ static Expr* constructCallToSuperInit(ConstructorDecl *ctor,
 
   DiagnosticSuppression suppression(ctor->getASTContext().Diags);
   auto resultTy =
-      TypeChecker::typeCheckExpression(r, ctor, TypeLoc(), CTP_Unused,
+      TypeChecker::typeCheckExpression(r, ctor, Type(), CTP_Unused,
                                        TypeCheckExprFlags::IsDiscarded);
   if (!resultTy)
     return nullptr;

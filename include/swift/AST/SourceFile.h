@@ -172,7 +172,7 @@ private:
 
   /// The list of top-level declarations in the source file. This is \c None if
   /// they have not yet been parsed.
-  /// FIXME: Once addTopLevelDecl/prependTopLevelDecl/truncateTopLevelDecls
+  /// FIXME: Once addTopLevelDecl/prependTopLevelDecl
   /// have been removed, this can become an optional ArrayRef.
   Optional<std::vector<Decl *>> Decls;
 
@@ -232,15 +232,6 @@ public:
     return llvm::makeArrayRef(*Decls);
   }
 
-  /// Truncates the list of top-level decls so it contains \c count elements. Do
-  /// not add any additional uses of this function.
-  void truncateTopLevelDecls(unsigned count) {
-    // Force decl parsing if we haven't already.
-    (void)getTopLevelDecls();
-    assert(count <= Decls->size() && "Can only truncate top-level decls!");
-    Decls->resize(count);
-  }
-
   /// Retrieve the parsing options for the file.
   ParsingOptions getParsingOptions() const { return ParsingOpts; }
 
@@ -250,12 +241,6 @@ public:
 
   /// The list of local type declarations in the source file.
   llvm::SetVector<TypeDecl *> LocalTypeDecls;
-
-  /// A set of special declaration attributes which require the
-  /// Foundation module to be imported to work. If the foundation
-  /// module is still not imported by the time type checking is
-  /// complete, we diagnose.
-  llvm::SetVector<const DeclAttribute *> AttrsRequiringFoundation;
 
   /// A set of synthesized declarations that need to be type checked.
   llvm::SmallVector<Decl *, 8> SynthesizedDecls;
@@ -530,7 +515,6 @@ public:
   bool isScriptMode() const {
     switch (Kind) {
     case SourceFileKind::Main:
-    case SourceFileKind::REPL:
       return true;
 
     case SourceFileKind::Library:
@@ -610,8 +594,6 @@ public:
   bool shouldBuildSyntaxTree() const;
 
   bool canBeParsedInFull() const;
-
-  bool isSuitableForASTScopes() const { return canBeParsedInFull(); }
 
   /// Whether the bodies of types and functions within this file can be lazily
   /// parsed.

@@ -250,9 +250,7 @@ computeSelfTypeRelationship(DeclContext *dc, ValueDecl *decl1,
 
   // If the model type does not conform to the protocol, the bases are
   // unrelated.
-  auto conformance = TypeChecker::conformsToProtocol(
-                         modelTy, proto, dc,
-                          ConformanceCheckFlags::SkipConditionalRequirements);
+  auto conformance = dc->getParentModule()->lookupConformance(modelTy, proto);
   if (conformance.isInvalid())
     return {SelfTypeRelationship::Unrelated, conformance};
 
@@ -769,8 +767,8 @@ SolutionCompareResult ConstraintSystem::compareSolutions(
   bool isVarAndNotProtocol2 = false;
 
   auto getWeight = [&](ConstraintLocator *locator) -> unsigned {
-    if (auto *anchor = locator->getAnchor().dyn_cast<const Expr *>()) {
-      auto weight = cs.getExprDepth(const_cast<Expr *>(anchor));
+    if (auto *anchor = locator->getAnchor().dyn_cast<Expr *>()) {
+      auto weight = cs.getExprDepth(anchor);
       if (weight)
         return *weight + 1;
     }

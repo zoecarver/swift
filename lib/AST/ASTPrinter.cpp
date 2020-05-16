@@ -1457,6 +1457,7 @@ void PrintAST::printSingleDepthOfGenericSignature(
     llvm::function_ref<bool(const Requirement &)> filter) {
   bool printParams = (flags & PrintParams);
   bool printRequirements = (flags & PrintRequirements);
+  printRequirements &= Options.PrintGenericRequirements;
   bool printInherited = (flags & PrintInherited);
   bool swapSelfAndDependentMemberType =
     (flags & SwapSelfAndDependentMemberType);
@@ -2611,9 +2612,17 @@ void PrintAST::visitVarDecl(VarDecl *decl) {
   auto type = decl->getInterfaceType();
   Printer << ": ";
   TypeLoc tyLoc;
-  if (auto *repr = decl->getTypeReprOrParentPatternTypeRepr())
+  if (auto *repr = decl->getTypeReprOrParentPatternTypeRepr()) {
+    // Workaround for if-let statements. The parser creates a `OptionalTypeRepr`
+    // even though the user-written declared type for the if-let variable
+    // is non-optional. Get the non-optional type so we can print it correctly.
+    if (auto *optRepr = dyn_cast<OptionalTypeRepr>(repr)) {
+      if (type && !isa<OptionalType>(type.getPointer())) {
+        repr = optRepr->getBase();
+      }
+    }
     tyLoc = TypeLoc(repr, type);
-  else
+  } else
     tyLoc = TypeLoc::withoutLoc(type);
 
   Printer.printDeclResultTypePre(decl, tyLoc);
@@ -4348,7 +4357,7 @@ public:
       if (T->hasExplicitAnyObject())
         Printer << "AnyObject";
       else
-        Printer << "Any";
+        Printer.printKeyword("Any", Options);
     } else {
       interleave(T->getMembers(), [&](Type Ty) { visit(Ty); },
                  [&] { Printer << " & "; });

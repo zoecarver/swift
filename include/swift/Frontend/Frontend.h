@@ -346,6 +346,9 @@ public:
     return ImplicitStdlibKind::Stdlib;
   }
 
+  /// Whether the Swift -Onone support library should be implicitly imported.
+  bool shouldImportSwiftONoneSupport() const;
+
   /// Performs input setup common to these tools:
   /// sil-opt, sil-func-extractor, sil-llvm-gen, and sil-nm.
   /// Return value includes the buffer so caller can keep it alive.
@@ -422,7 +425,6 @@ class CompilerInstance {
   DiagnosticEngine Diagnostics{SourceMgr};
   std::unique_ptr<ASTContext> Context;
   std::unique_ptr<Lowering::TypeConverter> TheSILTypes;
-  std::unique_ptr<SILModule> TheSILModule;
   std::unique_ptr<DiagnosticVerifier> DiagVerifier;
 
   /// Null if no tracker.
@@ -491,12 +493,9 @@ public:
 
   bool hasASTContext() const { return Context != nullptr; }
 
-  SILOptions &getSILOptions() { return Invocation.getSILOptions(); }
   const SILOptions &getSILOptions() const { return Invocation.getSILOptions(); }
 
   Lowering::TypeConverter &getSILTypes();
-
-  void createSILModule();
 
   void addDiagnosticConsumer(DiagnosticConsumer *DC) {
     Diagnostics.addConsumer(*DC);
@@ -514,16 +513,6 @@ public:
   const DependencyTracker *getDependencyTracker() const { return DepTracker.get(); }
 
   UnifiedStatsReporter *getStatsReporter() const { return Stats.get(); }
-
-  SILModule *getSILModule() {
-    return TheSILModule.get();
-  }
-
-  std::unique_ptr<SILModule> takeSILModule();
-
-  bool hasSILModule() {
-    return static_cast<bool>(TheSILModule);
-  }
 
   ModuleDecl *getMainModule() const;
 
@@ -657,9 +646,6 @@ private:
 public:
   void freeASTContext();
 
-  /// Frees up the SILModule that this instance is holding on to.
-  void freeSILModule();
-
 private:
   /// Load stdlib & return true if should continue, i.e. no error
   bool loadStdlib();
@@ -667,11 +653,11 @@ private:
   /// Retrieve a description of which modules should be implicitly imported.
   ImplicitImportInfo getImplicitImportInfo() const;
 
-  void performSemaUpTo(SourceFile::ASTStage_t LimitStage);
-  void parseAndCheckTypesUpTo(SourceFile::ASTStage_t LimitStage);
+  void performSemaUpTo(SourceFile::ASTStage_t LimitStage,
+                       SourceFile::ParsingOptions POpts = {});
 
   /// Return true if had load error
-  bool parsePartialModulesAndInputFiles();
+  bool loadPartialModulesAndImplicitImports();
 
   void forEachFileToTypeCheck(llvm::function_ref<void(SourceFile &)> fn);
 

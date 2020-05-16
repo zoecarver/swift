@@ -522,7 +522,7 @@ ConstraintSystem::SolverScope::~SolverScope() {
   // Remove any node types we registered.
   for (unsigned i :
            reverse(range(numAddedNodeTypes, cs.addedNodeTypes.size()))) {
-    TypedNode node = cs.addedNodeTypes[i].first;
+    auto node = cs.addedNodeTypes[i].first;
     if (Type oldType = cs.addedNodeTypes[i].second)
       cs.NodeTypes[node] = oldType;
     else
@@ -993,9 +993,8 @@ void ConstraintSystem::shrink(Expr *expr) {
             // instead of cloning representative.
             auto coercionRepr = typeRepr->clone(CS.getASTContext());
             // Let's try to resolve coercion type from cloned representative.
-            auto resolution = TypeResolution::forContextual(CS.DC);
-            auto coercionType =
-              resolution.resolveType(coercionRepr, None);
+            auto resolution = TypeResolution::forContextual(CS.DC, None);
+            auto coercionType = resolution.resolveType(coercionRepr);
 
             // Looks like coercion type is invalid, let's skip this sub-tree.
             if (coercionType->hasError())
@@ -1726,10 +1725,10 @@ void ConstraintSystem::ArgumentInfoCollector::minimizeLiteralProtocols() {
 
     auto first =
         TypeChecker::conformsToProtocol(candidate.second, candidates[result].first,
-                                        CS.DC, None);
+                                        CS.DC);
     auto second =
         TypeChecker::conformsToProtocol(candidates[result].second, candidate.first,
-                                        CS.DC, None);
+                                        CS.DC);
     if (first.isInvalid() == second.isInvalid())
       return;
 
@@ -1955,7 +1954,7 @@ void ConstraintSystem::sortDesignatedTypes(
         ++nextType;
         break;
       } else if (auto *protoDecl = dyn_cast<ProtocolDecl>(nominalTypes[i])) {
-        if (TypeChecker::conformsToProtocol(argType, protoDecl, DC, None)) {
+        if (TypeChecker::conformsToProtocol(argType, protoDecl, DC)) {
           std::swap(nominalTypes[nextType], nominalTypes[i]);
           ++nextType;
           break;

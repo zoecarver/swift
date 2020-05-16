@@ -766,9 +766,7 @@ ConstraintSystem::getPotentialBindings(TypeVariableType *typeVar) const {
 
         do {
           // If the type conforms to this protocol, we're covered.
-          if (TypeChecker::conformsToProtocol(
-                  testType, protocol, DC,
-                   ConformanceCheckFlags::SkipConditionalRequirements)) {
+          if (DC->getParentModule()->lookupConformance(testType, protocol)) {
             coveredLiteralProtocols.insert(protocol);
             break;
           }
@@ -1107,6 +1105,11 @@ bool TypeVariableBinding::attempt(ConstraintSystem &cs) const {
                  isExpr<ObjectLiteralExpr>(srcLocator->getAnchor())) {
         auto *fix = SpecifyObjectLiteralTypeImport::create(
             cs, TypeVar->getImpl().getLocator());
+        if (cs.recordFix(fix))
+          return true;
+      } else if (srcLocator->isKeyPathRoot()) {
+        auto *fix =
+            SpecifyKeyPathRootType::create(cs, TypeVar->getImpl().getLocator());
         if (cs.recordFix(fix))
           return true;
       }

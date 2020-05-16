@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/DeclObjC.h"
+#include "swift/AST/ASTContext.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/Module.h"
 #include "swift/AST/ProtocolConformance.h"
@@ -59,6 +60,7 @@ PrintOptions SymbolGraph::getDeclarationFragmentsPrintOptions() const {
   Opts.PrintUserInaccessibleAttrs = false;
   Opts.SkipPrivateStdlibDecls = true;
   Opts.SkipUnderscoredStdlibProtocols = true;
+  Opts.PrintGenericRequirements = false;
 
   Opts.ExclusiveAttrList.clear();
 
@@ -67,6 +69,18 @@ PrintOptions SymbolGraph::getDeclarationFragmentsPrintOptions() const {
 #include "swift/AST/Attr.def"
 
   return Opts;
+}
+
+PrintOptions
+SymbolGraph::getSubHeadingDeclarationFragmentsPrintOptions() const {
+  auto Options = getDeclarationFragmentsPrintOptions();
+  Options.ArgAndParamPrinting =
+    PrintOptions::ArgAndParamPrintingMode::ArgumentOnly;
+  Options.VarInitializers = false;
+  Options.PrintDefaultArgumentValue = false;
+  Options.PrintEmptyArgumentNames = false;
+  Options.PrintOverrideKeyword = false;
+  return Options;
 }
 
 bool
@@ -218,6 +232,28 @@ void SymbolGraph::recordSuperclassSynthesizedMemberRelationships(Symbol S) {
   }
 }
 
+bool SymbolGraph::synthesizedMemberIsBestCandidate(const ValueDecl *VD,
+    const NominalTypeDecl *Owner) const {
+  const auto *FD = dyn_cast<FuncDecl>(VD);
+  if (!FD) {
+    return true;
+  }
+  auto *DC = const_cast<DeclContext*>(Owner->getDeclContext());
+
+  ResolvedMemberResult Result =
+    resolveValueMember(*DC, Owner->getSelfTypeInContext(),
+                       FD->getEffectiveFullName());
+
+  const auto ViableCandidates =
+    Result.getMemberDecls(InterestedMemberKind::All);
+
+  if (ViableCandidates.size() < 2) {
+    return true;
+  }
+
+  return !(Result.hasBestOverload() && Result.getBestOverload() != VD);
+}
+
 void SymbolGraph::recordConformanceSynthesizedMemberRelationships(Symbol S) {
   if (!Walker.Options.EmitSynthesizedMembers) {
     return;
@@ -264,14 +300,22 @@ void SymbolGraph::recordConformanceSynthesizedMemberRelationships(Symbol S) {
             continue;
           }
 
+          const auto StdlibModule = OwningNominal->getASTContext()
+              .getStdlibModule(/*loadIfAbsent=*/true);
+
           // There can be synthesized members on effectively private protocols
           // or things that conform to them. We don't want to include those.
-          if (SynthMember->hasUnderscoredNaming()) {
+          if (isImplicitlyPrivate(SynthMember,
+              /*IgnoreContext =*/
+              SynthMember->getModuleContext() == StdlibModule)) {
             continue;
           }
 
-          auto ExtendedSG =
-              Walker.getModuleSymbolGraph(OwningNominal->getModuleContext());
+          if (!synthesizedMemberIsBestCandidate(SynthMember, OwningNominal)) {
+            continue;
+          }
+
+          auto ExtendedSG = Walker.getModuleSymbolGraph(OwningNominal);
 
           Symbol Source(this, SynthMember, OwningNominal);
           Symbol Target(this, OwningNominal, nullptr);
@@ -446,13 +490,13 @@ void SymbolGraph::serialize(llvm::json::OStream &OS) {
     }
 
     OS.attributeArray("symbols", [&](){
-      for (const auto S: Nodes) {
+      for (const auto &S: Nodes) {
         S.serialize(OS);
       }
     });
 
     OS.attributeArray("relationships", [&](){
-      for (const auto Relationship : Edges) {
+      for (const auto &Relationship : Edges) {
         Relationship.serialize(OS);
       }
     });
@@ -472,21 +516,32 @@ SymbolGraph::serializeDeclarationFragments(StringRef Key,
 }
 
 void
+SymbolGraph::serializeNavigatorDeclarationFragments(StringRef Key,
+                                                    const Symbol &S,
+                                                    llvm::json::OStream &OS) {
+  DeclarationFragmentPrinter Printer(OS, Key);
+
+  if (const auto *TD = dyn_cast<GenericTypeDecl>(S.getSymbolDecl())) {
+    Printer.printAbridgedType(TD, /*PrintKeyword=*/false);
+  } else {
+    auto Options = getSubHeadingDeclarationFragmentsPrintOptions();
+    if (S.getSynthesizedBaseType()) {
+      Options.setBaseType(S.getSynthesizedBaseType());
+    }
+    S.getSymbolDecl()->print(Printer, Options);
+  }
+}
+
+void
 SymbolGraph::serializeSubheadingDeclarationFragments(StringRef Key,
                                                      const Symbol &S,
                                                      llvm::json::OStream &OS) {
   DeclarationFragmentPrinter Printer(OS, Key);
 
   if (const auto *TD = dyn_cast<GenericTypeDecl>(S.getSymbolDecl())) {
-    Printer.printAbridgedType(TD);
+    Printer.printAbridgedType(TD, /*PrintKeyword=*/true);
   } else {
-    auto Options = getDeclarationFragmentsPrintOptions();
-    Options.ArgAndParamPrinting =
-      PrintOptions::ArgAndParamPrintingMode::ArgumentOnly;
-    Options.VarInitializers = false;
-    Options.PrintDefaultArgumentValue = false;
-    Options.PrintEmptyArgumentNames = false;
-    Options.PrintOverrideKeyword = false;
+    auto Options = getSubHeadingDeclarationFragmentsPrintOptions();
     if (S.getSynthesizedBaseType()) {
       Options.setBaseType(S.getSynthesizedBaseType());
     }
@@ -501,7 +556,8 @@ SymbolGraph::serializeDeclarationFragments(StringRef Key, Type T,
   T->print(Printer, getDeclarationFragmentsPrintOptions());
 }
 
-bool SymbolGraph::isImplicitlyPrivate(const ValueDecl *VD) const {
+bool SymbolGraph::isImplicitlyPrivate(const ValueDecl *VD,
+                                      bool IgnoreContext) const {
   // Don't record unconditionally private declarations
   if (VD->isPrivateStdlibDecl(/*treatNonBuiltinProtocolsAsPublic=*/false)) {
     return true;
@@ -550,15 +606,19 @@ bool SymbolGraph::isImplicitlyPrivate(const ValueDecl *VD) const {
     return true;
   }
 
+  if (IgnoreContext) {
+    return false;
+  }
+
   // Check up the parent chain. Anything inside a privately named
   // thing is also private. We could be looking at the `B` of `_A.B`.
   if (const auto *DC = VD->getDeclContext()) {
     if (const auto *Parent = DC->getAsDecl()) {
       if (const auto *ParentVD = dyn_cast<ValueDecl>(Parent)) {
-        return isImplicitlyPrivate(ParentVD);
+        return isImplicitlyPrivate(ParentVD, IgnoreContext);
       } else if (const auto *Extension = dyn_cast<ExtensionDecl>(Parent)) {
         if (const auto *Nominal = Extension->getExtendedNominal()) {
-          return isImplicitlyPrivate(Nominal);
+          return isImplicitlyPrivate(Nominal, IgnoreContext);
         }
       }
     }

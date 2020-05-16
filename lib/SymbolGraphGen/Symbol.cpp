@@ -126,7 +126,7 @@ void Symbol::serializeNames(llvm::json::OStream &OS) const {
     getPathComponents(PathComponents);
     
     OS.attribute("title", PathComponents.back());
-    // "navigator": null
+    Graph->serializeNavigatorDeclarationFragments("navigator", *this, OS);
     Graph->serializeSubheadingDeclarationFragments("subHeading", *this, OS);
     // "prose": null
   });
@@ -371,6 +371,7 @@ Symbol::getDomain(PlatformAgnosticAvailabilityKind AgnosticKind,
     case swift::PlatformKind::none:
       return None;
   }
+  llvm_unreachable("invalid platform kind");
 }
 
 void Symbol::serializeAvailabilityMixin(llvm::json::OStream &OS) const {

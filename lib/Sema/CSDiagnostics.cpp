@@ -51,17 +51,21 @@ bool FailureDiagnostic::diagnoseAsNote() {
   return false;
 }
 
-TypedNode FailureDiagnostic::getAnchor() const {
-  auto &cs = getConstraintSystem();
-
+ASTNode FailureDiagnostic::getAnchor() const {
   auto *locator = getLocator();
   // Resolve the locator to a specific expression.
-  SourceRange range;
-  ConstraintLocator *resolved = simplifyLocator(cs, locator, range);
-  if (!resolved || !resolved->getAnchor())
-    return locator->getAnchor();
 
-  auto anchor = resolved->getAnchor();
+  auto anchor = locator->getAnchor();
+
+  {
+    SourceRange range;
+    auto path = locator->getPath();
+
+    simplifyLocator(anchor, path, range);
+    if (!anchor)
+      return locator->getAnchor();
+  }
+
   // FIXME: Work around an odd locator representation that doesn't separate the
   // base of a subscript member from the member access.
   if (locator->isLastElement<LocatorPathElt::SubscriptMember>()) {
@@ -72,8 +76,12 @@ TypedNode FailureDiagnostic::getAnchor() const {
   return anchor;
 }
 
-Type FailureDiagnostic::getType(TypedNode node, bool wantRValue) const {
-  return resolveType(S.getType(node), /*reconstituteSugar=*/false, wantRValue);
+Type FailureDiagnostic::getType(ASTNode node, bool wantRValue) const {
+  return resolveType(getRawType(node), /*reconstituteSugar=*/false, wantRValue);
+}
+
+Type FailureDiagnostic::getRawType(ASTNode node) const {
+  return S.getType(node);
 }
 
 template <typename... ArgTypes>
@@ -146,6 +154,18 @@ Type FailureDiagnostic::restoreGenericParameters(
   });
 }
 
+bool FailureDiagnostic::conformsToKnownProtocol(
+    Type type, KnownProtocolKind protocol) const {
+  auto &cs = getConstraintSystem();
+  return constraints::conformsToKnownProtocol(cs, type, protocol);
+}
+
+Type FailureDiagnostic::isRawRepresentable(Type type,
+                                           KnownProtocolKind protocol) const {
+  auto &cs = getConstraintSystem();
+  return constraints::isRawRepresentable(cs, type, protocol);
+}
+
 Type RequirementFailure::getOwnerType() const {
   auto anchor = getRawAnchor();
 
@@ -183,7 +203,7 @@ const Requirement &RequirementFailure::getRequirement() const {
 
 ProtocolConformance *RequirementFailure::getConformanceForConditionalReq(
     ConstraintLocator *locator) {
-  auto &cs = getConstraintSystem();
+  auto &solution = getSolution();
   auto reqElt = locator->castLastElementTo<LocatorPathElt::AnyRequirement>();
   if (!reqElt.isConditionalRequirement())
     return nullptr;
@@ -192,10 +212,10 @@ ProtocolConformance *RequirementFailure::getConformanceForConditionalReq(
   auto *typeReqLoc = getConstraintLocator(getRawAnchor(), path.drop_back());
 
   auto result = llvm::find_if(
-      cs.CheckedConformances,
+      solution.Conformances,
       [&](const std::pair<ConstraintLocator *, ProtocolConformanceRef>
               &conformance) { return conformance.first == typeReqLoc; });
-  assert(result != cs.CheckedConformances.end());
+  assert(result != solution.Conformances.end());
 
   auto conformance = result->second;
   assert(conformance.isConcrete());
@@ -407,11 +427,10 @@ bool MissingConformanceFailure::diagnoseAsError() {
     if (auto *binaryOp = dyn_cast_or_null<BinaryExpr>(findParentExpr(anchor))) {
       auto *caseExpr = binaryOp->getArg()->getElement(0);
 
-      auto &cs = getConstraintSystem();
       llvm::SmallPtrSet<Expr *, 4> anchors;
-      for (const auto *fix : cs.getFixes()) {
+      for (const auto *fix : getSolution().Fixes) {
         if (auto anchor = fix->getAnchor()) {
-          if (anchor.is<const Expr *>())
+          if (anchor.is<Expr *>())
             anchors.insert(getAsExpr(anchor));
         }
       }
@@ -659,10 +678,6 @@ bool GenericArgumentsMismatchFailure::diagnoseAsError() {
       break;
     }
 
-    case ConstraintLocator::GenericArgument: {
-      break;
-    }
-
     case ConstraintLocator::OptionalPayload: {
       // If we have an inout expression, this comes from an
       // InoutToPointer argument mismatch failure.
@@ -689,7 +704,7 @@ bool GenericArgumentsMismatchFailure::diagnoseAsError() {
     }
 
     default:
-      return false;
+      break;
     }
   }
 
@@ -860,7 +875,7 @@ bool NoEscapeFuncToTypeConversionFailure::diagnoseParameterUse() const {
   return true;
 }
 
-TypedNode MissingForcedDowncastFailure::getAnchor() const {
+ASTNode MissingForcedDowncastFailure::getAnchor() const {
   auto anchor = FailureDiagnostic::getAnchor();
   if (auto *assignExpr = getAsExpr<AssignExpr>(anchor))
     return assignExpr->getSrc();
@@ -891,7 +906,7 @@ bool MissingAddressOfFailure::diagnoseAsError() {
   return true;
 }
 
-TypedNode MissingExplicitConversionFailure::getAnchor() const {
+ASTNode MissingExplicitConversionFailure::getAnchor() const {
   auto anchor = FailureDiagnostic::getAnchor();
 
   if (auto *assign = getAsExpr<AssignExpr>(anchor))
@@ -1262,12 +1277,11 @@ bool RValueTreatedAsLValueFailure::diagnoseAsError() {
                                                    ParameterTypeFlags())});
 
         if (auto info = getFunctionArgApplyInfo(argLoc)) {
-          auto &cs = getConstraintSystem();
           auto paramType = info->getParamType();
           auto argType = getType(inoutExpr)->getWithoutSpecifierType();
 
           PointerTypeKind ptr;
-          if (cs.isArrayType(argType) &&
+          if (isArrayType(argType) &&
               paramType->getAnyPointerElementType(ptr) &&
               (ptr == PTK_UnsafePointer || ptr == PTK_UnsafeRawPointer)) {
             emitDiagnosticAt(inoutExpr->getLoc(),
@@ -1451,8 +1465,7 @@ bool TrailingClosureAmbiguityFailure::diagnoseAsNote() {
   return true;
 }
 
-AssignmentFailure::AssignmentFailure(const Expr *destExpr,
-                                     const Solution &solution,
+AssignmentFailure::AssignmentFailure(Expr *destExpr, const Solution &solution,
                                      SourceLoc diagnosticLoc)
     : FailureDiagnostic(solution, destExpr), DestExpr(destExpr),
       Loc(diagnosticLoc),
@@ -2022,8 +2035,7 @@ bool ContextualFailure::diagnoseAsError() {
   }
 
   case ConstraintLocator::RValueAdjustment: {
-    auto &cs = getConstraintSystem();
-
+    auto &solution = getSolution();
     auto overload = getOverloadChoiceIfAvailable(
         getConstraintLocator(anchor, ConstraintLocator::UnresolvedMember));
     if (!(overload && overload->choice.isDecl()))
@@ -2049,8 +2061,11 @@ bool ContextualFailure::diagnoseAsError() {
 
     auto params = fnType->getParams();
 
-    ParameterListInfo info(params, choice,
-                           hasAppliedSelf(cs, overload->choice));
+    ParameterListInfo info(
+        params, choice,
+        hasAppliedSelf(overload->choice, [&solution](Type type) {
+          return solution.simplifyType(type);
+        }));
     auto numMissingArgs = llvm::count_if(
         indices(params), [&info](const unsigned paramIdx) -> bool {
           return !info.hasDefaultArgument(paramIdx);
@@ -2403,9 +2418,8 @@ bool ContextualFailure::diagnoseConversionToBool() const {
 
   // If we're trying to convert something from optional type to an integer, then
   // a comparison against nil was probably expected.
-  auto &cs = getConstraintSystem();
-  if (conformsToKnownProtocol(cs, fromType, KnownProtocolKind::BinaryInteger) &&
-      conformsToKnownProtocol(cs, fromType,
+  if (conformsToKnownProtocol(fromType, KnownProtocolKind::BinaryInteger) &&
+      conformsToKnownProtocol(fromType,
                               KnownProtocolKind::ExpressibleByIntegerLiteral)) {
     StringRef prefix = "((";
     StringRef suffix;
@@ -2451,7 +2465,7 @@ bool ContextualFailure::diagnoseThrowsTypeMismatch() const {
           Ctx.getProtocol(KnownProtocolKind::ErrorCodeProtocol)) {
     Type errorCodeType = getFromType();
     auto conformance = TypeChecker::conformsToProtocol(
-        errorCodeType, errorCodeProtocol, getDC(), None);
+        errorCodeType, errorCodeProtocol, getDC());
     if (conformance) {
       Type errorType =
           conformance
@@ -2500,7 +2514,6 @@ bool ContextualFailure::diagnoseYieldByReferenceMismatch() const {
 bool ContextualFailure::tryRawRepresentableFixIts(
     InFlightDiagnostic &diagnostic,
     KnownProtocolKind rawRepresentableProtocol) const {
-  auto &CS = getConstraintSystem();
   auto anchor = getAnchor();
   auto fromType = getFromType();
   auto toType = getToType();
@@ -2555,14 +2568,14 @@ bool ContextualFailure::tryRawRepresentableFixIts(
     }
   };
 
-  if (conformsToKnownProtocol(CS, fromType, rawRepresentableProtocol)) {
-    if (conformsToKnownProtocol(CS, fromType, KnownProtocolKind::OptionSet) &&
+  if (conformsToKnownProtocol(fromType, rawRepresentableProtocol)) {
+    if (conformsToKnownProtocol(fromType, KnownProtocolKind::OptionSet) &&
         isExpr<IntegerLiteralExpr>(anchor) &&
         castToExpr<IntegerLiteralExpr>(anchor)->getDigitsText() == "0") {
       diagnostic.fixItReplace(::getSourceRange(anchor), "[]");
       return true;
     }
-    if (auto rawTy = isRawRepresentable(CS, toType, rawRepresentableProtocol)) {
+    if (auto rawTy = isRawRepresentable(toType, rawRepresentableProtocol)) {
       // Produce before/after strings like 'Result(rawValue: RawType(<expr>))'
       // or just 'Result(rawValue: <expr>)'.
       std::string convWrapBefore = toType.getString();
@@ -2592,8 +2605,8 @@ bool ContextualFailure::tryRawRepresentableFixIts(
     }
   }
 
-  if (auto rawTy = isRawRepresentable(CS, fromType, rawRepresentableProtocol)) {
-    if (conformsToKnownProtocol(CS, toType, rawRepresentableProtocol)) {
+  if (auto rawTy = isRawRepresentable(fromType, rawRepresentableProtocol)) {
+    if (conformsToKnownProtocol(toType, rawRepresentableProtocol)) {
       std::string convWrapBefore;
       std::string convWrapAfter = ".rawValue";
       if (!TypeChecker::isConvertibleTo(rawTy, toType, getDC())) {
@@ -2781,8 +2794,7 @@ bool ContextualFailure::tryProtocolConformanceFixIt(
   // Let's build a list of protocols that the context does not conform to.
   SmallVector<std::string, 8> missingProtoTypeStrings;
   for (auto protocol : layout.getProtocols()) {
-    if (!TypeChecker::conformsToProtocol(fromType, protocol->getDecl(), getDC(),
-                                         None)) {
+    if (!TypeChecker::conformsToProtocol(fromType, protocol->getDecl(), getDC())) {
       missingProtoTypeStrings.push_back(protocol->getString());
     }
   }
@@ -2875,12 +2887,11 @@ void ContextualFailure::tryComputedPropertyFixIts() const {
 }
 
 bool ContextualFailure::isIntegerToStringIndexConversion() const {
-  auto &cs = getConstraintSystem();
   auto kind = KnownProtocolKind::ExpressibleByIntegerLiteral;
 
   auto fromType = getFromType();
   auto toType = getToType()->getCanonicalType();
-  return (conformsToKnownProtocol(cs, fromType, kind) &&
+  return (conformsToKnownProtocol(fromType, kind) &&
           toType.getString() == "String.CharacterView.Index");
 }
 
@@ -3012,7 +3023,7 @@ bool NonOptionalUnwrapFailure::diagnoseAsError() {
   return true;
 }
 
-TypedNode MissingCallFailure::getAnchor() const {
+ASTNode MissingCallFailure::getAnchor() const {
   auto anchor = FailureDiagnostic::getAnchor();
 
   if (auto *FVE = getAsExpr<ForceValueExpr>(anchor))
@@ -3137,12 +3148,18 @@ bool MissingPropertyWrapperUnwrapFailure::diagnoseAsError() {
 }
 
 bool SubscriptMisuseFailure::diagnoseAsError() {
+  auto *locator = getLocator();
   auto &sourceMgr = getASTContext().SourceMgr;
 
   auto *memberExpr = castToExpr<UnresolvedDotExpr>(getRawAnchor());
 
   auto memberRange = getSourceRange();
-  (void)simplifyLocator(getConstraintSystem(), getLocator(), memberRange);
+
+  {
+    auto rawAnchor = getRawAnchor();
+    auto path = locator->getPath();
+    simplifyLocator(rawAnchor, path, memberRange);
+  }
 
   auto nameLoc = DeclNameLoc(memberRange.Start);
 
@@ -3172,7 +3189,7 @@ bool SubscriptMisuseFailure::diagnoseAsError() {
   }
   diag.flush();
 
-  if (auto overload = getOverloadChoiceIfAvailable(getLocator())) {
+  if (auto overload = getOverloadChoiceIfAvailable(locator)) {
     emitDiagnosticAt(overload->choice.getDecl(), diag::kind_declared_here,
                      DescriptiveDeclKind::Subscript);
   }
@@ -3212,6 +3229,9 @@ bool MissingMemberFailure::diagnoseAsError() {
   auto memberBase = getAnchor();
 
   if (diagnoseForDynamicCallable())
+    return true;
+  
+  if (diagnoseInLiteralCollectionContext())
     return true;
 
   auto baseType = resolveType(getBaseType())->getWithoutSpecifierType();
@@ -3400,6 +3420,36 @@ bool MissingMemberFailure::diagnoseForDynamicCallable() const {
   return false;
 }
 
+bool MissingMemberFailure::diagnoseInLiteralCollectionContext() const {
+  auto *expr = castToExpr(getAnchor());
+  auto *parentExpr = findParentExpr(expr);
+  auto &solution = getSolution();
+
+  if (!(parentExpr && isa<UnresolvedMemberExpr>(expr)))
+    return false;
+
+  auto parentType = getType(parentExpr);
+
+  if (!isCollectionType(parentType) && !parentType->is<TupleType>())
+    return false;
+
+  if (isa<TupleExpr>(parentExpr)) {
+    parentExpr = findParentExpr(parentExpr);
+    if (!parentExpr)
+      return false;
+  }
+
+  if (auto *defaultableVar =
+          getRawType(parentExpr)->getAs<TypeVariableType>()) {
+    if (solution.DefaultedConstraints.count(
+            defaultableVar->getImpl().getLocator()) != 0) {
+      emitDiagnostic(diag::unresolved_member_no_inference, getName());
+      return true;
+    }
+  }
+  return false;
+}
+
 bool InvalidMemberRefOnExistential::diagnoseAsError() {
   auto anchor = getRawAnchor();
 
@@ -3435,7 +3485,7 @@ bool AllowTypeOrInstanceMemberFailure::diagnoseAsError() {
 
   auto anchor = getAnchor();
 
-  if (!anchor.is<const Expr *>())
+  if (!anchor.is<Expr *>())
     return false;
 
   Expr *expr = findParentExpr(castToExpr(anchor));
@@ -3710,7 +3760,7 @@ bool AllowTypeOrInstanceMemberFailure::diagnoseAsError() {
     }
 
     // Fall back to a fix-it with a full type qualifier
-    const Expr *baseExpr = nullptr;
+    Expr *baseExpr = nullptr;
     if (const auto *SE = getAsExpr<SubscriptExpr>(getRawAnchor()))
       baseExpr = SE->getBase();
     else if (const auto UDE = getAsExpr<UnresolvedDotExpr>(getRawAnchor()))
@@ -3788,7 +3838,7 @@ bool ImplicitInitOnNonConstMetatypeFailure::diagnoseAsError() {
   return true;
 }
 
-TypedNode MissingArgumentsFailure::getAnchor() const {
+ASTNode MissingArgumentsFailure::getAnchor() const {
   auto anchor = FailureDiagnostic::getAnchor();
 
   if (auto *captureList = getAsExpr<CaptureListExpr>(anchor))
@@ -4229,12 +4279,11 @@ bool MissingArgumentsFailure::isMisplacedMissingArgument(
     return (*fix)->getKind() == kind;
   };
 
-  auto &cs = solution.getConstraintSystem();
   auto *callLocator =
-      cs.getConstraintLocator(anchor, ConstraintLocator::ApplyArgument);
+      solution.getConstraintLocator(anchor, {ConstraintLocator::ApplyArgument});
 
   auto argFlags = fnType->getParams()[0].getParameterFlags();
-  auto *argLoc = cs.getConstraintLocator(
+  auto *argLoc = solution.getConstraintLocator(
       callLocator, LocatorPathElt::ApplyArgToParam(0, 0, argFlags));
 
   if (!(hasFixFor(FixKind::AllowArgumentTypeMismatch, argLoc) &&
@@ -4263,11 +4312,11 @@ bool MissingArgumentsFailure::isMisplacedMissingArgument(
   auto argType = solution.simplifyType(solution.getType(argument));
   auto paramType = fnType->getParams()[1].getPlainType();
 
-  return TypeChecker::isConvertibleTo(argType, paramType, cs.DC);
+  return TypeChecker::isConvertibleTo(argType, paramType, solution.getDC());
 }
 
 std::tuple<Expr *, Expr *, unsigned, bool>
-MissingArgumentsFailure::getCallInfo(TypedNode anchor) const {
+MissingArgumentsFailure::getCallInfo(ASTNode anchor) const {
   if (auto *call = getAsExpr<CallExpr>(anchor)) {
     return std::make_tuple(call->getFn(), call->getArg(),
                            call->getNumArguments(), call->hasTrailingClosure());
@@ -5021,17 +5070,17 @@ bool MissingGenericArgumentsFailure::diagnoseForAnchor(
 
 bool MissingGenericArgumentsFailure::diagnoseParameter(
     Anchor anchor, GenericTypeParamType *GP) const {
-  auto &cs = getConstraintSystem();
+  auto &solution = getSolution();
 
-  auto loc = anchor.is<const Expr *>() ? anchor.get<const Expr *>()->getLoc()
-                                       : anchor.get<TypeRepr *>()->getLoc();
+  auto loc = anchor.is<Expr *>() ? anchor.get<Expr *>()->getLoc()
+                                 : anchor.get<TypeRepr *>()->getLoc();
 
   auto *locator = getLocator();
   // Type variables associated with missing generic parameters are
   // going to be completely cut off from the rest of constraint system,
   // that's why we'd get two fixes in this case which is not ideal.
   if (locator->isForContextualType() &&
-      llvm::count_if(cs.DefaultedConstraints,
+      llvm::count_if(solution.DefaultedConstraints,
                      [&GP](const ConstraintLocator *locator) {
                        return locator->getGenericParameter() == GP;
                      }) > 1) {
@@ -5071,14 +5120,14 @@ bool MissingGenericArgumentsFailure::diagnoseParameter(
 
 void MissingGenericArgumentsFailure::emitGenericSignatureNote(
     Anchor anchor) const {
-  auto &cs = getConstraintSystem();
+  auto &solution = getSolution();
   auto *paramDC = getDeclContext();
 
   if (!paramDC)
     return;
 
   auto *GTD = dyn_cast<GenericTypeDecl>(paramDC);
-  if (!GTD || anchor.is<const Expr *>())
+  if (!GTD || anchor.is<Expr *>())
     return;
 
   auto getParamDecl =
@@ -5089,7 +5138,9 @@ void MissingGenericArgumentsFailure::emitGenericSignatureNote(
   };
 
   llvm::SmallDenseMap<GenericTypeParamDecl *, Type> params;
-  for (auto *typeVar : cs.getTypeVariables()) {
+  for (auto &entry : solution.typeBindings) {
+    auto *typeVar = entry.first;
+
     auto *GP = typeVar->getImpl().getGenericParameter();
     if (!GP)
       continue;
@@ -5099,7 +5150,7 @@ void MissingGenericArgumentsFailure::emitGenericSignatureNote(
 
     // If this is one of the defaulted parameter types, attempt
     // to emit placeholder for it instead of `Any`.
-    if (llvm::any_of(cs.DefaultedConstraints,
+    if (llvm::any_of(solution.DefaultedConstraints,
                      [&](const ConstraintLocator *locator) {
                        return GP->getDecl() == getParamDecl(locator);
                      }))
@@ -5139,7 +5190,7 @@ bool MissingGenericArgumentsFailure::findArgumentLocations(
 
   TypeLoc typeLoc;
   if (auto *TE = getAsExpr<TypeExpr>(anchor))
-    typeLoc = TE->getTypeLoc();
+    typeLoc = TE->getTypeRepr();
   else if (auto *ECE = getAsExpr<ExplicitCastExpr>(anchor))
     typeLoc = ECE->getCastTypeLoc();
 
@@ -5526,11 +5577,14 @@ bool ArgumentMismatchFailure::diagnoseUseOfReferenceEqualityOperator() const {
   // let's avoid producing a diagnostic second time, because first
   // one would cover both arguments.
   if (getAsExpr(getAnchor()) == rhs && rhsType->is<FunctionType>()) {
-    auto &cs = getConstraintSystem();
-    if (cs.hasFixFor(getConstraintLocator(
-            binaryOp, {ConstraintLocator::ApplyArgument,
-                       LocatorPathElt::ApplyArgToParam(
-                           0, 0, getParameterFlagsAtIndex(0))})))
+    auto *argLoc = getConstraintLocator(
+        binaryOp,
+        {ConstraintLocator::ApplyArgument,
+         LocatorPathElt::ApplyArgToParam(0, 0, getParameterFlagsAtIndex(0))});
+
+    if (llvm::any_of(getSolution().Fixes, [&argLoc](const ConstraintFix *fix) {
+          return fix->getLocator() == argLoc;
+        }))
       return true;
   }
 
@@ -5826,6 +5880,7 @@ void NonEphemeralConversionFailure::emitSuggestionNotes() const {
     case PTK_AutoreleasingUnsafeMutablePointer:
       return None;
     }
+    llvm_unreachable("invalid pointer kind");
   };
 
   // First emit a note about the implicit conversion only lasting for the
@@ -6207,5 +6262,34 @@ bool KeyPathRootTypeMismatchFailure::diagnoseAsError() {
 
   emitDiagnostic(diag::expr_keypath_root_type_mismatch,
                  rootType, baseType);
+  return true;
+}
+
+bool MultiArgFuncKeyPathFailure::diagnoseAsError() {
+  // Diagnose use a keypath where a function with multiple arguments is expected
+  emitDiagnostic(diag::expr_keypath_multiparam_func_conversion,
+                 resolveType(functionType));
+  return true;
+}
+
+bool UnableToInferKeyPathRootFailure::diagnoseAsError() {
+  assert(isExpr<KeyPathExpr>(getAnchor()) && "Expected key path expression");
+  auto &ctx = getASTContext();
+  auto contextualType = getContextualType(getAnchor());
+  auto *keyPathExpr = castToExpr<KeyPathExpr>(getAnchor());
+
+  auto emitKeyPathDiagnostic = [&]() {
+    if (contextualType &&
+        contextualType->getAnyNominal() == ctx.getAnyKeyPathDecl()) {
+      return emitDiagnostic(
+          diag::cannot_infer_keypath_root_anykeypath_context);
+    }
+    return emitDiagnostic(
+        diag::cannot_infer_contextual_keypath_type_specify_root);
+  };
+
+  emitKeyPathDiagnostic()
+      .highlight(keyPathExpr->getLoc())
+      .fixItInsertAfter(keyPathExpr->getStartLoc(), "<#Root#>");
   return true;
 }
