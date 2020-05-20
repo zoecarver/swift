@@ -3484,8 +3484,9 @@ namespace {
 
       result->setHasUnreferenceableStorage(hasUnreferenceableStorage);
 
-      if (auto cxxRecordDecl = dyn_cast<clang::CXXRecordDecl>(decl)) {
-        result->setIsCxxNonTrivial(!cxxRecordDecl->isTriviallyCopyable());
+      if (cxxRecordDecl) {
+        result->setIsCxxNonTrivial(
+            !cxxRecordDecl->isTriviallyCopyable());
 
         for (auto ctor : cxxRecordDecl->ctors()) {
           if (ctor->isCopyConstructor() &&
@@ -3520,8 +3521,9 @@ namespace {
         clang::CXXConstructorDecl *ctor =
             clangSema.DeclareImplicitDefaultConstructor(
                 const_cast<clang::CXXRecordDecl *>(decl));
-        clangSema.DefineImplicitDefaultConstructor(clang::SourceLocation(),
-                                                   ctor);
+        if (!ctor->isDeleted())
+          clangSema.DefineImplicitDefaultConstructor(clang::SourceLocation(),
+                                                     ctor);
       }
 
       return VisitRecordDecl(decl);
@@ -3901,6 +3903,11 @@ namespace {
 
       AbstractFunctionDecl *result = nullptr;
       if (auto *ctordecl = dyn_cast<clang::CXXConstructorDecl>(decl)) {
+        // Don't import copy constructor or move constructor -- these will be
+        // provided through the value witness table.
+        if (ctordecl->isCopyConstructor() || ctordecl->isMoveConstructor())
+          return nullptr;
+
         DeclName ctorName(Impl.SwiftContext, DeclBaseName::createConstructor(),
                           bodyParams);
         result = Impl.createDeclWithClangNode<ConstructorDecl>(
