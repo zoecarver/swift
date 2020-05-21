@@ -595,9 +595,8 @@ ClosureSpecCloner::initCloned(SILOptFunctionBuilder &FunctionBuilder,
   auto ClosureUserConv = ClosureUser->getConventions();
   unsigned Index = ClosureUserConv.getSILArgIndexOfFirstParam();
   for (auto &param : ClosureUserConv.getParameters()) {
-    if (Index != CallSiteDesc.getClosureIndex()) {
+    if (Index != CallSiteDesc.getClosureIndex())
       NewParameterInfoList.push_back(param);
-    }
     ++Index;
   }
 
@@ -1115,10 +1114,6 @@ bool SILClosureSpecializerTransform::gatherCallSites(
       for (size_t UseIndex = 0; UseIndex < Uses.size(); ++UseIndex) {
         auto *Use = Uses[UseIndex];
         UsePoints.push_back(Use->getUser());
-
-        // Ignore dealloc stacks.
-        if (isa<DeallocStackInst>(Use->getUser()))
-          continue;
 
         // Recurse through conversions.
         if (auto *CFI = dyn_cast<ConvertFunctionInst>(Use->getUser())) {
