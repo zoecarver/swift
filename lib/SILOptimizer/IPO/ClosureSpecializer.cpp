@@ -59,10 +59,10 @@
 #include "swift/AST/GenericEnvironment.h"
 #include "swift/Basic/Range.h"
 #include "swift/SIL/InstructionUtils.h"
-#include "swift/SIL/TypeSubstCloner.h"
 #include "swift/SIL/SILFunction.h"
 #include "swift/SIL/SILInstruction.h"
 #include "swift/SIL/SILModule.h"
+#include "swift/SIL/TypeSubstCloner.h"
 #include "swift/SILOptimizer/Analysis/BasicCalleeAnalysis.h"
 #include "swift/SILOptimizer/Analysis/FunctionOrder.h"
 #include "swift/SILOptimizer/Analysis/ValueTracking.h"
@@ -117,7 +117,8 @@ class CallSiteDescriptor;
 /// We also need to replace the closure parameter with the partial apply
 /// on the closure. We need to update the callsite to pass in the correct
 /// arguments.
-class ClosureSpecCloner : public TypeSubstCloner<ClosureSpecCloner, SILOptFunctionBuilder> {
+class ClosureSpecCloner
+    : public TypeSubstCloner<ClosureSpecCloner, SILOptFunctionBuilder> {
 public:
   using SuperTy = TypeSubstCloner<ClosureSpecCloner, SILOptFunctionBuilder>;
   friend class SILInstructionVisitor<ClosureSpecCloner>;
@@ -127,9 +128,9 @@ public:
                     const CallSiteDescriptor &CallSiteDesc,
                     StringRef ClonedName, SILFunction &oldFunc,
                     SubstitutionMap oldSubstMap)
-      : SuperTy(*initCloned(FunctionBuilder, CallSiteDesc, ClonedName), oldFunc, oldSubstMap),
-        CallSiteDesc(CallSiteDesc),
-        funcBuilder(FunctionBuilder) {}
+      : SuperTy(*initCloned(FunctionBuilder, CallSiteDesc, ClonedName), oldFunc,
+                oldSubstMap),
+        CallSiteDesc(CallSiteDesc), funcBuilder(FunctionBuilder) {}
 
   void populateCloned();
 
@@ -144,12 +145,13 @@ public:
                                     const CallSiteDescriptor &CallSiteDesc,
                                     StringRef NewName, SILFunction &oldFunc,
                                     SubstitutionMap oldSubstMap) {
-    ClosureSpecCloner C(FunctionBuilder, CallSiteDesc, NewName, oldFunc, oldSubstMap);
+    ClosureSpecCloner C(FunctionBuilder, CallSiteDesc, NewName, oldFunc,
+                        oldSubstMap);
     C.populateCloned();
     ++NumClosureSpecialized;
     return C.getCloned();
   };
-  
+
 protected:
   void postProcess(SILInstruction *Orig, SILInstruction *Cloned) {
     SILClonerWithScopes<ClosureSpecCloner>::postProcess(Orig, Cloned);
@@ -161,7 +163,7 @@ private:
                                  StringRef ClonedName);
 
   const SILDebugScope *remapScope(const SILDebugScope *DS);
-  
+
   const CallSiteDescriptor &CallSiteDesc;
   SILOptFunctionBuilder &funcBuilder;
 };
@@ -238,7 +240,8 @@ public:
   createNewClosure(SILBuilder &B, SILValue V,
                    llvm::SmallVectorImpl<SILValue> &Args) const {
     if (auto *PA = dyn_cast<PartialApplyInst>(getClosure()))
-      return B.createPartialApply(getClosure()->getLoc(), V, PA->getSubstitutionMap(), Args,
+      return B.createPartialApply(getClosure()->getLoc(), V,
+                                  PA->getSubstitutionMap(), Args,
                                   getClosure()
                                       ->getType()
                                       .getAs<SILFunctionType>()
@@ -445,9 +448,9 @@ static void rewriteApplyInst(const CallSiteDescriptor &CSDesc,
   switch (AI.getKind()) {
   case FullApplySiteKind::TryApplyInst: {
     auto *TAI = cast<TryApplyInst>(AI);
-    NewAI = Builder.createTryApply(AI.getLoc(), FRI,
-                                   TAI->getSubstitutionMap(), NewArgs,
-                                   TAI->getNormalBB(), TAI->getErrorBB());
+    NewAI =
+        Builder.createTryApply(AI.getLoc(), FRI, TAI->getSubstitutionMap(),
+                               NewArgs, TAI->getNormalBB(), TAI->getErrorBB());
     // If we passed in the original closure as @owned, then insert a release
     // right after NewAI. This is to balance the +1 from being an @owned
     // argument to AI.
@@ -467,8 +470,8 @@ static void rewriteApplyInst(const CallSiteDescriptor &CSDesc,
   case FullApplySiteKind::ApplyInst: {
     auto oldApply = cast<ApplyInst>(AI);
     auto newApply = Builder.createApply(oldApply->getLoc(), FRI,
-                                        oldApply->getSubstitutionMap(),
-                                        NewArgs, oldApply->isNonThrowing());
+                                        oldApply->getSubstitutionMap(), NewArgs,
+                                        oldApply->isNonThrowing());
     // If we passed in the original closure as @owned, then insert a release
     // right after NewAI. This is to balance the +1 from being an @owned
     // argument to AI.
@@ -682,14 +685,15 @@ const SILDebugScope *ClosureSpecCloner::remapScope(const SILDebugScope *DS) {
   if (!DS)
     return nullptr;
 
-  SILDebugScope *debugScope = const_cast<SILDebugScope*>(DS);
-  while (auto *parentDebugScope = debugScope->Parent.dyn_cast<const SILDebugScope*>()) {
-    debugScope = const_cast<SILDebugScope*>(parentDebugScope);
+  SILDebugScope *debugScope = const_cast<SILDebugScope *>(DS);
+  while (auto *parentDebugScope =
+             debugScope->Parent.dyn_cast<const SILDebugScope *>()) {
+    debugScope = const_cast<SILDebugScope *>(parentDebugScope);
   }
 
   // FIXME: make the debug scopes correct.
-  return new (getBuilder().getModule()) SILDebugScope(DS->Loc, &getBuilder().getFunction(),
-                                                      nullptr, DS->InlinedCallSite);
+  return new (getBuilder().getModule()) SILDebugScope(
+      DS->Loc, &getBuilder().getFunction(), nullptr, DS->InlinedCallSite);
 }
 
 // Clone a chain of ConvertFunctionInsts.
@@ -823,7 +827,12 @@ void ClosureSpecCloner::populateCloned() {
     auto paramTy =
         ClosedOverFunConv.getSILType(PInfo, Builder.getTypeExpansionContext());
     // Get the type in context of the new function.
-    paramTy = Cloned->getModule().Types.getTypeLowering(paramTy, TypeExpansionContext(*Cloned), Cloned->getLoweredFunctionType()->getInvocationGenericSignature()).getLoweredType();
+    paramTy = Cloned->getModule()
+                  .Types
+                  .getTypeLowering(paramTy, TypeExpansionContext(*Cloned),
+                                   Cloned->getLoweredFunctionType()
+                                       ->getInvocationGenericSignature())
+                  .getLoweredType();
     paramTy = paramTy.subst(Cloned->getModule().Types,
                             Cloned->getForwardingSubstitutionMap());
     SILValue MappedValue = ClonedEntryBB->createFunctionArgument(paramTy);
@@ -1313,7 +1322,9 @@ bool SILClosureSpecializerTransform::specialize(SILFunction *Caller,
       // directly.
       SILFunction *derivedF = nullptr;
       if (!NewF) {
-        NewF = ClosureSpecCloner::cloneFunction(FuncBuilder, CSDesc, NewFName, *Caller, CSDesc.getApplyInst().getSubstitutionMap());
+        NewF = ClosureSpecCloner::cloneFunction(
+            FuncBuilder, CSDesc, NewFName, *Caller,
+            CSDesc.getApplyInst().getSubstitutionMap());
         derivedF = CSDesc.getApplyCallee();
       }
 
