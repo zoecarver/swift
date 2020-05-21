@@ -56,9 +56,10 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "closure-specialization"
+#include "swift/AST/GenericEnvironment.h"
 #include "swift/Basic/Range.h"
 #include "swift/SIL/InstructionUtils.h"
-#include "swift/SIL/SILCloner.h"
+#include "swift/SIL/TypeSubstCloner.h"
 #include "swift/SIL/SILFunction.h"
 #include "swift/SIL/SILInstruction.h"
 #include "swift/SIL/SILModule.h"
@@ -116,17 +117,19 @@ class CallSiteDescriptor;
 /// We also need to replace the closure parameter with the partial apply
 /// on the closure. We need to update the callsite to pass in the correct
 /// arguments.
-class ClosureSpecCloner : public SILClonerWithScopes<ClosureSpecCloner> {
+class ClosureSpecCloner : public TypeSubstCloner<ClosureSpecCloner, SILOptFunctionBuilder> {
 public:
-  using SuperTy = SILClonerWithScopes<ClosureSpecCloner>;
+  using SuperTy = TypeSubstCloner<ClosureSpecCloner, SILOptFunctionBuilder>;
   friend class SILInstructionVisitor<ClosureSpecCloner>;
   friend class SILCloner<ClosureSpecCloner>;
 
   ClosureSpecCloner(SILOptFunctionBuilder &FunctionBuilder,
                     const CallSiteDescriptor &CallSiteDesc,
-                    StringRef ClonedName)
-      : SuperTy(*initCloned(FunctionBuilder, CallSiteDesc, ClonedName)),
-        CallSiteDesc(CallSiteDesc) {}
+                    StringRef ClonedName, SILFunction &oldFunc,
+                    SubstitutionMap oldSubstMap)
+      : SuperTy(*initCloned(FunctionBuilder, CallSiteDesc, ClonedName), oldFunc, oldSubstMap),
+        CallSiteDesc(CallSiteDesc),
+        funcBuilder(FunctionBuilder) {}
 
   void populateCloned();
 
@@ -139,18 +142,28 @@ public:
   SILFunction *getCloned() { return &getBuilder().getFunction(); }
   static SILFunction *cloneFunction(SILOptFunctionBuilder &FunctionBuilder,
                                     const CallSiteDescriptor &CallSiteDesc,
-                                    StringRef NewName) {
-    ClosureSpecCloner C(FunctionBuilder, CallSiteDesc, NewName);
+                                    StringRef NewName, SILFunction &oldFunc,
+                                    SubstitutionMap oldSubstMap) {
+    ClosureSpecCloner C(FunctionBuilder, CallSiteDesc, NewName, oldFunc, oldSubstMap);
     C.populateCloned();
     ++NumClosureSpecialized;
     return C.getCloned();
   };
+  
+protected:
+  void postProcess(SILInstruction *Orig, SILInstruction *Cloned) {
+    SILClonerWithScopes<ClosureSpecCloner>::postProcess(Orig, Cloned);
+  }
 
 private:
   static SILFunction *initCloned(SILOptFunctionBuilder &FunctionBuilder,
                                  const CallSiteDescriptor &CallSiteDesc,
                                  StringRef ClonedName);
+
+  const SILDebugScope *remapScope(const SILDebugScope *DS);
+  
   const CallSiteDescriptor &CallSiteDesc;
+  SILOptFunctionBuilder &funcBuilder;
 };
 
 } // end anonymous namespace
@@ -208,7 +221,6 @@ public:
     auto *PA = dyn_cast<PartialApplyInst>(newClosure);
     if (!PA || !PA->isOnStack())
       return false;
-    insertDestroyOfCapturedArguments(PA, B);
     B.createDeallocStack(getClosure()->getLoc(), PA);
     return true;
   }
@@ -226,7 +238,7 @@ public:
   createNewClosure(SILBuilder &B, SILValue V,
                    llvm::SmallVectorImpl<SILValue> &Args) const {
     if (auto *PA = dyn_cast<PartialApplyInst>(getClosure()))
-      return B.createPartialApply(getClosure()->getLoc(), V, {}, Args,
+      return B.createPartialApply(getClosure()->getLoc(), V, PA->getSubstitutionMap(), Args,
                                   getClosure()
                                       ->getType()
                                       .getAs<SILFunctionType>()
@@ -364,8 +376,8 @@ static void rewriteApplyInst(const CallSiteDescriptor &CSDesc,
         ClosureCalleeConv.getSILArgumentConvention(ClosureArgIdx);
 
     // Non-inout indirect arguments are not supported yet.
-    assert(ArgTy.isObject() ||
-           !isNonInoutIndirectSILArgument(Arg, ArgConvention));
+//    assert(ArgTy.isObject() ||
+//           !isNonInoutIndirectSILArgument(Arg, ArgConvention));
 
     // If argument is not an object and it is an inout parameter,
     // continue...
@@ -423,12 +435,10 @@ static void rewriteApplyInst(const CallSiteDescriptor &CSDesc,
       // partial_apply
       // in the callee that is consumed by the partial_apply.
       Builder.setInsertionPoint(AI.getInstruction());
-      Builder.createRetainValue(Closure->getLoc(), Arg,
-                                Builder.getDefaultAtomicity());
-    } else {
-      Builder.createRetainValue(Closure->getLoc(), Arg,
-                                Builder.getDefaultAtomicity());
     }
+    if (!Arg->getType().isAddress())
+      Builder.createRetainValue(Closure->getLoc(), Arg,
+                                Builder.getDefaultAtomicity());
 
     NewArgs.push_back(Arg);
     ++ClosureArgIdx;
@@ -440,7 +450,7 @@ static void rewriteApplyInst(const CallSiteDescriptor &CSDesc,
   case FullApplySiteKind::TryApplyInst: {
     auto *TAI = cast<TryApplyInst>(AI);
     NewAI = Builder.createTryApply(AI.getLoc(), FRI,
-                                   SubstitutionMap(), NewArgs,
+                                   TAI->getSubstitutionMap(), NewArgs,
                                    TAI->getNormalBB(), TAI->getErrorBB());
     // If we passed in the original closure as @owned, then insert a release
     // right after NewAI. This is to balance the +1 from being an @owned
@@ -461,7 +471,7 @@ static void rewriteApplyInst(const CallSiteDescriptor &CSDesc,
   case FullApplySiteKind::ApplyInst: {
     auto oldApply = cast<ApplyInst>(AI);
     auto newApply = Builder.createApply(oldApply->getLoc(), FRI,
-                                        SubstitutionMap(),
+                                        oldApply->getSubstitutionMap(),
                                         NewArgs, oldApply->isNonThrowing());
     // If we passed in the original closure as @owned, then insert a release
     // right after NewAI. This is to balance the +1 from being an @owned
@@ -541,10 +551,6 @@ static bool isSupportedClosure(const SILInstruction *Closure) {
 
   // If Closure is a partial apply...
   if (auto *PAI = dyn_cast<PartialApplyInst>(Closure)) {
-    // And it has substitutions, return false.
-    if (PAI->hasSubstitutions())
-      return false;
-
     // Ok, it is a closure we support, set Callee.
     Callee = PAI->getCallee();
 
@@ -560,31 +566,6 @@ static bool isSupportedClosure(const SILInstruction *Closure) {
   auto *FRI = dyn_cast_or_null<FunctionRefInst>(Callee);
   if (!FRI)
     return false;
-
-  if (auto *PAI = dyn_cast<PartialApplyInst>(Closure)) {
-    // Bail if any of the arguments are passed by address and
-    // are not @inout.
-    // This is a temporary limitation.
-    auto ClosureCallee = FRI->getReferencedFunctionOrNull();
-    assert(ClosureCallee);
-    auto ClosureCalleeConv = ClosureCallee->getConventions();
-    unsigned ClosureArgIdx =
-        ClosureCalleeConv.getNumSILArguments() - PAI->getNumArguments();
-    for (auto Arg : PAI->getArguments()) {
-      SILType ArgTy = Arg->getType();
-      // If our argument is an object, continue...
-      if (ArgTy.isObject()) {
-        ++ClosureArgIdx;
-        continue;
-      }
-      auto ArgConvention =
-          ClosureCalleeConv.getSILArgumentConvention(ClosureArgIdx);
-      if (ArgConvention != SILArgumentConvention::Indirect_Inout &&
-          ArgConvention != SILArgumentConvention::Indirect_InoutAliasable)
-        return false;
-      ++ClosureArgIdx;
-    }
-  }
 
   // Otherwise, we do support specializing this closure.
   return true;
@@ -612,23 +593,24 @@ ClosureSpecCloner::initCloned(SILOptFunctionBuilder &FunctionBuilder,
   // This is the list of new interface parameters of the cloned function.
   llvm::SmallVector<SILParameterInfo, 4> NewParameterInfoList;
 
-  // First add to NewParameterInfoList all of the SILParameterInfo in the
-  // original function except for the closure.
-  CanSILFunctionType ClosureUserFunTy = ClosureUser->getLoweredFunctionType();
-  auto ClosureUserConv = ClosureUser->getConventions();
-  unsigned Index = ClosureUserConv.getSILArgIndexOfFirstParam();
-  for (auto &param : ClosureUserConv.getParameters()) {
-    if (Index != CallSiteDesc.getClosureIndex())
-      NewParameterInfoList.push_back(param);
-    ++Index;
-  }
-
   // Then add any arguments that are captured in the closure to the function's
   // argument type. Since they are captured, we need to pass them directly into
   // the new specialized function.
   SILFunction *ClosedOverFun = CallSiteDesc.getClosureCallee();
   auto ClosedOverFunConv = ClosedOverFun->getConventions();
   SILModule &M = ClosureUser->getModule();
+
+  // First add to NewParameterInfoList all of the SILParameterInfo in the
+  // original function except for the closure.
+  CanSILFunctionType ClosureUserFunTy = ClosureUser->getLoweredFunctionType();
+  auto ClosureUserConv = ClosureUser->getConventions();
+  unsigned Index = ClosureUserConv.getSILArgIndexOfFirstParam();
+  for (auto &param : ClosureUserConv.getParameters()) {
+    if (Index != CallSiteDesc.getClosureIndex()) {
+      NewParameterInfoList.push_back(param.getUnsubstituted(M, ClosureUserFunTy, TypeExpansionContext(*ClosedOverFun)));
+    }
+    ++Index;
+  }
 
   // Captured parameters are always appended to the function signature. If the
   // type of the captured argument is:
@@ -645,9 +627,6 @@ ClosureSpecCloner::initCloned(SILOptFunctionBuilder &FunctionBuilder,
     ParameterConvention ParamConv;
     if (PInfo.isFormalIndirect()) {
       ParamConv = PInfo.getConvention();
-      assert(!SILModuleConventions(M).useLoweredAddresses()
-             || ParamConv == ParameterConvention::Indirect_Inout
-             || ParamConv == ParameterConvention::Indirect_InoutAliasable);
     } else {
       ParamConv = ClosedOverFunConv
                           .getSILType(PInfo, CallSiteDesc.getApplyInst()
@@ -659,7 +638,7 @@ ClosureSpecCloner::initCloned(SILOptFunctionBuilder &FunctionBuilder,
     }
 
     SILParameterInfo NewPInfo(PInfo.getInterfaceType(), ParamConv);
-    NewParameterInfoList.push_back(NewPInfo);
+    NewParameterInfoList.push_back(NewPInfo.getUnsubstituted(M, ClosureUserFunTy, TypeExpansionContext(*ClosedOverFun)));
   }
 
   // The specialized function is always a thin function. This is important
@@ -702,6 +681,20 @@ ClosureSpecCloner::initCloned(SILOptFunctionBuilder &FunctionBuilder,
   for (auto &Attr : ClosureUser->getSemanticsAttrs())
     Fn->addSemanticsAttr(Attr);
   return Fn;
+}
+
+const SILDebugScope *ClosureSpecCloner::remapScope(const SILDebugScope *DS) {
+  if (!DS)
+    return nullptr;
+
+  SILDebugScope *debugScope = const_cast<SILDebugScope*>(DS);
+  while (auto *parentDebugScope = debugScope->Parent.dyn_cast<const SILDebugScope*>()) {
+    debugScope = const_cast<SILDebugScope*>(parentDebugScope);
+  }
+
+  // FIXME: make the debug scopes correct.
+  return new (getBuilder().getModule()) SILDebugScope(DS->Loc, &getBuilder().getFunction(),
+                                                      nullptr, DS->InlinedCallSite);
 }
 
 // Clone a chain of ConvertFunctionInsts.
@@ -792,6 +785,8 @@ void ClosureSpecCloner::populateCloned() {
   SILBasicBlock *ClosureUserEntryBB = &*ClosureUser->begin();
   SILBasicBlock *ClonedEntryBB = Cloned->createBasicBlock();
 
+  Cloned->setGenericEnvironment(Original.getGenericEnvironment());
+
   SmallVector<SILValue, 4> entryArgs;
   entryArgs.reserve(ClosureUserEntryBB->getArguments().size());
 
@@ -805,6 +800,8 @@ void ClosureSpecCloner::populateCloned() {
 
     // Otherwise, create a new argument which copies the original argument
     auto typeInContext = Cloned->getLoweredType(Arg->getType());
+    typeInContext = typeInContext.subst(Cloned->getModule().Types, Cloned->getForwardingSubstitutionMap());
+    assert(typeInContext.getAs<ArchetypeType>()->getGenericEnvironment() == Cloned->getGenericEnvironment());
     SILValue MappedValue =
         ClonedEntryBB->createFunctionArgument(typeInContext, Arg->getDecl());
     entryArgs.push_back(MappedValue);
@@ -829,7 +826,9 @@ void ClosureSpecCloner::populateCloned() {
     auto paramTy =
         ClosedOverFunConv.getSILType(PInfo, Builder.getTypeExpansionContext());
     // Get the type in context of the new function.
-    paramTy = Cloned->getLoweredType(paramTy);
+    paramTy = Cloned->getModule().Types.getTypeLowering(paramTy, TypeExpansionContext(*Cloned), Cloned->getLoweredFunctionType()->getInvocationGenericSignature()).getLoweredType();
+    paramTy = paramTy.subst(Cloned->getModule().Types, Cloned->getForwardingSubstitutionMap());
+    assert(paramTy.getAs<ArchetypeType>()->getGenericEnvironment() == Cloned->getGenericEnvironment());
     SILValue MappedValue = ClonedEntryBB->createFunctionArgument(paramTy);
     NewPAIArgs.push_back(MappedValue);
     auto CapturedVal =
@@ -1119,6 +1118,10 @@ bool SILClosureSpecializerTransform::gatherCallSites(
         auto *Use = Uses[UseIndex];
         UsePoints.push_back(Use->getUser());
 
+        // Ignore dealloc stacks.
+        if (isa<DeallocStackInst>(Use->getUser()))
+          continue;
+
         // Recurse through conversions.
         if (auto *CFI = dyn_cast<ConvertFunctionInst>(Use->getUser())) {
           // Push Uses in reverse order so they are visited in forward order.
@@ -1173,8 +1176,7 @@ bool SILClosureSpecializerTransform::gatherCallSites(
         // inst with substitutions, there is nothing interesting for us to do,
         // so continue...
         auto AI = FullApplySite::isa(Use->getUser());
-        if (!AI || AI.hasSubstitutions() ||
-            !canSpecializeFullApplySite(AI.getKind()) ||
+        if (!AI || !canSpecializeFullApplySite(AI.getKind()) ||
             !AI.canOptimize())
           continue;
 
@@ -1316,13 +1318,17 @@ bool SILClosureSpecializerTransform::specialize(SILFunction *Caller,
 
       // If not, create a specialized version of ApplyCallee calling the closure
       // directly.
+      SILFunction *derivedF = nullptr;
       if (!NewF) {
-        NewF = ClosureSpecCloner::cloneFunction(FuncBuilder, CSDesc, NewFName);
-        addFunctionToPassManagerWorklist(NewF, CSDesc.getApplyCallee());
+        NewF = ClosureSpecCloner::cloneFunction(FuncBuilder, CSDesc, NewFName, *Caller, CSDesc.getApplyInst().getSubstitutionMap());
+        derivedF = CSDesc.getApplyCallee();
       }
 
       // Rewrite the call
       rewriteApplyInst(CSDesc, NewF);
+
+      if (derivedF)
+        addFunctionToPassManagerWorklist(NewF, derivedF);
 
       PropagatedClosures.push_back(CSDesc.getClosure());
       Changed = true;

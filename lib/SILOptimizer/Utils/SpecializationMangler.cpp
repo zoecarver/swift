@@ -270,9 +270,20 @@ FunctionSignatureSpecializationMangler::mangleClosureProp(SILInstruction *Inst) 
 
   // Then we mangle the types of the arguments that the partial apply is
   // specializing.
+  unsigned i = 0;
   for (auto &Op : PAI->getArgumentOperands()) {
     SILType Ty = Op.get()->getType();
-    appendType(Ty.getASTType());
+    if (Ty.getASTType()->getKind() == TypeKind::PrimaryArchetype ||
+        Ty.getASTType()->getKind() == TypeKind::OpenedArchetype) {
+      auto archetype = Ty.getASTType()->getAs<ArchetypeType>();
+//      PAI->getFunctionType()->getParameters()[i].getInterfaceType().subst(SubstMap)
+//      appendType(Type(ParamType).subst(SubMap)->getCanonicalType());
+      // appendType(PAI->getFunctionType()->getParameters()[i].getInterfaceType());
+      tryMangleTypeSubstitution(archetype);
+    }
+    else
+      appendType(Ty.getASTType());
+    (void)++i;
   }
 }
 
