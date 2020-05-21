@@ -375,10 +375,6 @@ static void rewriteApplyInst(const CallSiteDescriptor &CSDesc,
     auto ArgConvention =
         ClosureCalleeConv.getSILArgumentConvention(ClosureArgIdx);
 
-    // Non-inout indirect arguments are not supported yet.
-//    assert(ArgTy.isObject() ||
-//           !isNonInoutIndirectSILArgument(Arg, ArgConvention));
-
     // If argument is not an object and it is an inout parameter,
     // continue...
     if (!ArgTy.isObject() &&
@@ -593,13 +589,6 @@ ClosureSpecCloner::initCloned(SILOptFunctionBuilder &FunctionBuilder,
   // This is the list of new interface parameters of the cloned function.
   llvm::SmallVector<SILParameterInfo, 4> NewParameterInfoList;
 
-  // Then add any arguments that are captured in the closure to the function's
-  // argument type. Since they are captured, we need to pass them directly into
-  // the new specialized function.
-  SILFunction *ClosedOverFun = CallSiteDesc.getClosureCallee();
-  auto ClosedOverFunConv = ClosedOverFun->getConventions();
-  SILModule &M = ClosureUser->getModule();
-
   // First add to NewParameterInfoList all of the SILParameterInfo in the
   // original function except for the closure.
   CanSILFunctionType ClosureUserFunTy = ClosureUser->getLoweredFunctionType();
@@ -607,10 +596,17 @@ ClosureSpecCloner::initCloned(SILOptFunctionBuilder &FunctionBuilder,
   unsigned Index = ClosureUserConv.getSILArgIndexOfFirstParam();
   for (auto &param : ClosureUserConv.getParameters()) {
     if (Index != CallSiteDesc.getClosureIndex()) {
-      NewParameterInfoList.push_back(param.getUnsubstituted(M, ClosureUserFunTy, TypeExpansionContext(*ClosedOverFun)));
+      NewParameterInfoList.push_back(param);
     }
     ++Index;
   }
+
+  // Then add any arguments that are captured in the closure to the function's
+  // argument type. Since they are captured, we need to pass them directly into
+  // the new specialized function.
+  SILFunction *ClosedOverFun = CallSiteDesc.getClosureCallee();
+  auto ClosedOverFunConv = ClosedOverFun->getConventions();
+  SILModule &M = ClosureUser->getModule();
 
   // Captured parameters are always appended to the function signature. If the
   // type of the captured argument is:
@@ -638,7 +634,7 @@ ClosureSpecCloner::initCloned(SILOptFunctionBuilder &FunctionBuilder,
     }
 
     SILParameterInfo NewPInfo(PInfo.getInterfaceType(), ParamConv);
-    NewParameterInfoList.push_back(NewPInfo.getUnsubstituted(M, ClosureUserFunTy, TypeExpansionContext(*ClosedOverFun)));
+    NewParameterInfoList.push_back(NewPInfo);
   }
 
   // The specialized function is always a thin function. This is important
@@ -785,6 +781,8 @@ void ClosureSpecCloner::populateCloned() {
   SILBasicBlock *ClosureUserEntryBB = &*ClosureUser->begin();
   SILBasicBlock *ClonedEntryBB = Cloned->createBasicBlock();
 
+  // Use the original functions generic function so that generic types are the
+  // same in both functions.
   Cloned->setGenericEnvironment(Original.getGenericEnvironment());
 
   SmallVector<SILValue, 4> entryArgs;
@@ -800,8 +798,8 @@ void ClosureSpecCloner::populateCloned() {
 
     // Otherwise, create a new argument which copies the original argument
     auto typeInContext = Cloned->getLoweredType(Arg->getType());
-    typeInContext = typeInContext.subst(Cloned->getModule().Types, Cloned->getForwardingSubstitutionMap());
-    assert(typeInContext.getAs<ArchetypeType>()->getGenericEnvironment() == Cloned->getGenericEnvironment());
+    typeInContext = typeInContext.subst(Cloned->getModule().Types,
+                                        Cloned->getForwardingSubstitutionMap());
     SILValue MappedValue =
         ClonedEntryBB->createFunctionArgument(typeInContext, Arg->getDecl());
     entryArgs.push_back(MappedValue);
@@ -827,8 +825,8 @@ void ClosureSpecCloner::populateCloned() {
         ClosedOverFunConv.getSILType(PInfo, Builder.getTypeExpansionContext());
     // Get the type in context of the new function.
     paramTy = Cloned->getModule().Types.getTypeLowering(paramTy, TypeExpansionContext(*Cloned), Cloned->getLoweredFunctionType()->getInvocationGenericSignature()).getLoweredType();
-    paramTy = paramTy.subst(Cloned->getModule().Types, Cloned->getForwardingSubstitutionMap());
-    assert(paramTy.getAs<ArchetypeType>()->getGenericEnvironment() == Cloned->getGenericEnvironment());
+    paramTy = paramTy.subst(Cloned->getModule().Types,
+                            Cloned->getForwardingSubstitutionMap());
     SILValue MappedValue = ClonedEntryBB->createFunctionArgument(paramTy);
     NewPAIArgs.push_back(MappedValue);
     auto CapturedVal =
@@ -1327,6 +1325,8 @@ bool SILClosureSpecializerTransform::specialize(SILFunction *Caller,
       // Rewrite the call
       rewriteApplyInst(CSDesc, NewF);
 
+      // If we created a function, pass it to the pass manager. Do this after
+      // we-rewrite the apply because adding it to the worklist will verify it.
       if (derivedF)
         addFunctionToPassManagerWorklist(NewF, derivedF);
 

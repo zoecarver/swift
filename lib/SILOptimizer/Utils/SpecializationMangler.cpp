@@ -275,11 +275,7 @@ FunctionSignatureSpecializationMangler::mangleClosureProp(SILInstruction *Inst) 
     SILType Ty = Op.get()->getType();
     if (Ty.getASTType()->getKind() == TypeKind::PrimaryArchetype ||
         Ty.getASTType()->getKind() == TypeKind::OpenedArchetype) {
-      auto archetype = Ty.getASTType()->getAs<ArchetypeType>();
-//      PAI->getFunctionType()->getParameters()[i].getInterfaceType().subst(SubstMap)
-//      appendType(Type(ParamType).subst(SubMap)->getCanonicalType());
-      // appendType(PAI->getFunctionType()->getParameters()[i].getInterfaceType());
-      tryMangleTypeSubstitution(archetype);
+      tryMangleTypeSubstitution(Ty.getASTType());
     }
     else
       appendType(Ty.getASTType());
