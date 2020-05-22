@@ -1136,8 +1136,10 @@ void ASTMangler::appendType(Type type, const ValueDecl *forDecl) {
 
       // type ::= archetype
     case TypeKind::PrimaryArchetype:
-    case TypeKind::OpenedArchetype:
-      llvm_unreachable("Cannot mangle free-standing archetypes");
+    case TypeKind::OpenedArchetype: {
+      tryMangleTypeSubstitution(type);
+      return;
+    }
 
     case TypeKind::OpaqueTypeArchetype: {
       // If this is the opaque return type of the declaration currently being
@@ -1359,7 +1361,7 @@ void ASTMangler::appendFlatGenericArgs(SubstitutionMap subs) {
   for (auto replacement : subs.getReplacementTypes()) {
     if (replacement->hasArchetype())
       replacement = replacement->mapTypeOutOfContext();
-    appendType(replacement);
+    appendType(replacement->getCanonicalType(subs.getGenericSignature()));
   }
 }
 

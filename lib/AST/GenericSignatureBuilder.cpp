@@ -3804,11 +3804,11 @@ void GenericSignatureBuilder::addGenericParameter(GenericTypeParamType *GenericP
   GenericParamKey Key(GenericParam);
   auto params = getGenericParams();
   (void)params;
-  assert(params.empty() ||
-         ((Key.Depth == params.back()->getDepth() &&
-           Key.Index == params.back()->getIndex() + 1) ||
-          (Key.Depth > params.back()->getDepth() &&
-           Key.Index == 0)));
+//  assert(params.empty() ||
+//         ((Key.Depth == params.back()->getDepth() &&
+//           Key.Index == params.back()->getIndex() + 1) ||
+//          (Key.Depth > params.back()->getDepth() &&
+//           Key.Index == 0)));
 
   // Create a potential archetype for this type parameter.
   auto PA =

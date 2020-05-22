@@ -12,6 +12,7 @@
 
 #include "swift/SILOptimizer/Utils/SpecializationMangler.h"
 #include "swift/SIL/SILGlobalVariable.h"
+#include "swift/SIL/SILModule.h"
 #include "swift/AST/GenericSignature.h"
 #include "swift/AST/SubstitutionMap.h"
 #include "swift/Demangling/ManglingMacros.h"
@@ -272,11 +273,7 @@ FunctionSignatureSpecializationMangler::mangleClosureProp(SILInstruction *Inst) 
   // specializing.
   for (auto &Op : PAI->getArgumentOperands()) {
     SILType Ty = Op.get()->getType();
-    if (Ty.getASTType()->getKind() == TypeKind::PrimaryArchetype ||
-        Ty.getASTType()->getKind() == TypeKind::OpenedArchetype)
-      tryMangleTypeSubstitution(Ty.getASTType());
-    else
-      appendType(Ty.getASTType());
+    appendType(Ty.getASTType());
   }
 }
 
