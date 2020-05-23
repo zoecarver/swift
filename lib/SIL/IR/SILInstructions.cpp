@@ -2381,6 +2381,10 @@ ConvertFunctionInst *ConvertFunctionInst::create(
     (void)opTI;
     CanSILFunctionType resTI = CFI->getType().castTo<SILFunctionType>();
     (void)resTI;
+    if (!opTI->isABICompatibleWith(resTI, F).isCompatible()) {
+      resTI->dump();
+      F.getLoweredFunctionType().dump();
+    }
     assert(opTI->isABICompatibleWith(resTI, F).isCompatible() &&
            "Can not convert in between ABI incompatible function types");
   }

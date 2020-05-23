@@ -273,7 +273,9 @@ FunctionSignatureSpecializationMangler::mangleClosureProp(SILInstruction *Inst) 
   // specializing.
   for (auto &Op : PAI->getArgumentOperands()) {
     SILType Ty = Op.get()->getType();
-    appendType(Ty.getASTType());
+    if (Ty.getASTType()->getKind() != TypeKind::PrimaryArchetype &&
+        Ty.getASTType()->getKind() != TypeKind::OpenedArchetype)
+      appendType(Ty.getASTType());
   }
 }
 

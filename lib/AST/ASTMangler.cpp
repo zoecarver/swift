@@ -1136,10 +1136,10 @@ void ASTMangler::appendType(Type type, const ValueDecl *forDecl) {
 
       // type ::= archetype
     case TypeKind::PrimaryArchetype:
-    case TypeKind::OpenedArchetype: {
-      tryMangleTypeSubstitution(type);
+    case TypeKind::OpenedArchetype:
+      // TODO: implement this. Now we just use a dummy type (AnyObject).
+      appendType(tybase->getASTContext().getAnyObjectType());
       return;
-    }
 
     case TypeKind::OpaqueTypeArchetype: {
       // If this is the opaque return type of the declaration currently being
