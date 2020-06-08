@@ -1,0 +1,3 @@
+module CustomDestructorTypes {
+  header "custom-destructor-types.h"
+}

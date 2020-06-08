@@ -38,6 +38,7 @@
 #include "GenMeta.h"
 #include "GenOpaque.h"
 #include "GenPointerAuth.h"
+#include "GenStruct.h"
 #include "IRGenDebugInfo.h"
 #include "IRGenFunction.h"
 #include "IRGenModule.h"
@@ -831,13 +832,22 @@ static void addValueWitness(IRGenModule &IGM,
 
   // Try to use a standard function.
   switch (index) {
-  case ValueWitness::Destroy:
+  case ValueWitness::Destroy: {
+    bool isClangType =
+        (concreteType.getStructOrBoundGenericStruct() &&
+         concreteType.getStructOrBoundGenericStruct()->getClangDecl());
+    // Emit ClangRecordTypeInfo::destroy in a function and add that function to
+    // the vtable.
+    if (isClangType)
+      goto standard;
+
     if (concreteTI.isPOD(ResilienceExpansion::Maximal)) {
       return addFunction(getNoOpVoidFunction(IGM));
     } else if (concreteTI.isSingleSwiftRetainablePointer(ResilienceExpansion::Maximal)) {
       return addFunction(getDestroyStrongFunction(IGM));
     }
     goto standard;
+  }
 
   case ValueWitness::InitializeBufferWithCopyOfBuffer:
     if (packing == FixedPacking::OffsetZero) {
@@ -1030,6 +1040,9 @@ getAddrOfKnownValueWitnessTable(IRGenModule &IGM, CanType type,
     // which case values never exist to witness).
     if (auto enumDecl = dyn_cast<EnumDecl>(nom))
       if (!enumDecl->isObjC() && !type->isUninhabited())
+        return {};
+    if (auto structDecl = dyn_cast<StructDecl>(nom))
+      if (structDecl->getClangDecl())
         return {};
   }
  
