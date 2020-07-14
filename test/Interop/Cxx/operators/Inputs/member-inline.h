@@ -6,4 +6,14 @@ struct IntBox {
   IntBox operator+(IntBox rhs) { return IntBox{.value = value + rhs.value}; }
 };
 
+struct AddressOnlyIntWrapper {
+  int value;
+  AddressOnlyIntWrapper(int value) : value(value) {}
+  AddressOnlyIntWrapper(AddressOnlyIntWrapper const &other)
+      : value(other.value) {}
+  AddressOnlyIntWrapper operator-(AddressOnlyIntWrapper rhs) {
+    return AddressOnlyIntWrapper(value - rhs.value);
+  }
+};
+
 #endif

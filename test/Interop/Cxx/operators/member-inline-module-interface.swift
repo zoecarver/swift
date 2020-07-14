@@ -3,3 +3,7 @@
 // CHECK: struct IntBox {
 // CHECK:   static func + (lhs: inout IntBox, rhs: IntBox) -> IntBox
 // CHECK: }
+
+// CHECK: struct AddressOnlyIntWrapper {
+// CHECK:   static func - (lhs: inout AddressOnlyIntWrapper, rhs: AddressOnlyIntWrapper) -> AddressOnlyIntWrapper
+// CHECK: }

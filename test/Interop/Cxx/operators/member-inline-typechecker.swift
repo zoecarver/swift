@@ -2,7 +2,10 @@
 
 import MemberInline
 
-var lhs = IntBox(value: 42)
-let rhs = IntBox(value: 23)
+var lhsLoadable = IntBox(value: 42)
+let rhsLoadable = IntBox(value: 23)
+let resultPlusLoadable = lhsLoadable + rhsLoadable
 
-let resultPlus = lhs + rhs
+var lhsAddressOnly = AddressOnlyIntWrapper(value: 42)
+var rhsAddressOnly = AddressOnlyIntWrapper(value: 23)
+let resultMinusAddressOnly = lhsAddressOnly - rhsAddressOnly
