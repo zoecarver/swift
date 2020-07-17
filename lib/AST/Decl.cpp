@@ -7217,13 +7217,14 @@ FuncDecl *FuncDecl::createImported(ASTContext &Context, SourceLoc FuncLoc,
                                    DeclName Name, SourceLoc NameLoc,
                                    bool Async, bool Throws,
                                    ParameterList *BodyParams,
-                                   Type FnRetType, DeclContext *Parent,
+                                   Type FnRetType,
+                                   GenericParamList *GenericParams,
+                                   DeclContext *Parent,
                                    ClangNode ClangN) {
   assert(ClangN && FnRetType);
   auto *const FD = FuncDecl::createImpl(
       Context, SourceLoc(), StaticSpellingKind::None, FuncLoc, Name, NameLoc,
-      Async, SourceLoc(), Throws, SourceLoc(),
-      /*GenericParams=*/nullptr, Parent, ClangN);
+      Async, SourceLoc(), Throws, SourceLoc(), GenericParams, Parent, ClangN);
   FD->setParameters(BodyParams);
   FD->setResultInterfaceType(FnRetType);
   return FD;

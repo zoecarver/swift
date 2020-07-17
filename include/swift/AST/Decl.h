@@ -5947,6 +5947,7 @@ public:
                                   DeclName Name, SourceLoc NameLoc,
                                   bool Async, bool Throws,
                                   ParameterList *BodyParams, Type FnRetType,
+                                  GenericParamList *GenericParams,
                                   DeclContext *Parent, ClangNode ClangN);
 
   bool isStatic() const;
