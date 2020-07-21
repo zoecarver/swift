@@ -44,6 +44,7 @@
 #include "swift/ClangImporter/ClangImporter.h"
 #include "swift/Strings.h"
 #include "clang/AST/DeclBase.h"
+#include "clang/AST/DeclTemplate.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
@@ -750,7 +751,13 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
 
   if (decl->getClangDecl()) {
     llvm::errs() << "BUBUBUUUUUUUUUU TYPECHECKING CLANG DECL\n";
-    decl->getClangDecl()->dump();
+    void *InsertPos = nullptr;
+    auto clangDecl = decl->getClangDecl();
+    if (auto classTemplateDecl = dyn_cast<clang::ClassTemplateDecl>(clangDecl)) {
+      generic->getGenericArgs
+      clang::ClassTemplateSpecializationDecl *Decl
+        = classTemplateDecl->findSpecialization(Converted, InsertPos);
+    }
   }
 
   // Make sure we have the right number of generic arguments.
