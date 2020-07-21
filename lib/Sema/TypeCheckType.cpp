@@ -43,6 +43,7 @@
 #include "swift/Basic/StringExtras.h"
 #include "swift/ClangImporter/ClangImporter.h"
 #include "swift/Strings.h"
+#include "clang/AST/DeclBase.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
@@ -746,6 +747,11 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
 
   auto *unboundType = type->castTo<UnboundGenericType>();
   auto *decl = unboundType->getDecl();
+
+  if (decl->getClangDecl()) {
+    llvm::errs() << "BUBUBUUUUUUUUUU TYPECHECKING CLANG DECL\n";
+    decl->getClangDecl()->dump();
+  }
 
   // Make sure we have the right number of generic arguments.
   // FIXME: If we have fewer arguments than we need, that might be okay, if

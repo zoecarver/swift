@@ -3499,6 +3499,8 @@ namespace {
     }
 
     Decl *VisitTemplateTypeParmDecl(const clang::TemplateTypeParmDecl *decl) {
+      llvm::errs() << "HOHOHOOOOOO TEMPLATE TYPE PARM DECL\n";
+      decl->dump();
       // Note: templates are not imported.
       return nullptr;
     }
@@ -4052,17 +4054,23 @@ namespace {
     }
 
     Decl *VisitImplicitParamDecl(const clang::ImplicitParamDecl *decl) {
+      llvm::errs() << "HOHOHOOOOOO IMPLICIT TEMPLATE PARM DECL\n";
+      decl->dump();
       // Parameters are never directly imported.
       return nullptr;
     }
 
     Decl *VisitParmVarDecl(const clang::ParmVarDecl *decl) {
+      llvm::errs() << "HOHOHOOOOOO TEMPLATE PARM VAR DECL\n";
+      decl->dump();
       // Parameters are never directly imported.
       return nullptr;
     }
 
     Decl *
     VisitNonTypeTemplateParmDecl(const clang::NonTypeTemplateParmDecl *decl) {
+      llvm::errs() << "HOHOHOOOOOO NON TYPE TEMPLATE PARM DECL\n";
+      decl->dump();
       // Note: templates are not imported.
       return nullptr;
     }
@@ -4082,12 +4090,27 @@ namespace {
       auto name = importedName.getDeclName().getBaseIdentifier();
       if (name.empty())
         return nullptr;
-      auto Loc = Impl.importSourceLoc(decl->getLocation());
+      auto loc = Impl.importSourceLoc(decl->getLocation());
       auto dc = Impl.importDeclContextOf(
           decl, importedName.getEffectiveContext());
 
+      clang::ASTContext &ctx = decl->getASTContext();
+
+      SmallVector<GenericTypeParamDecl *, 4> genericParams;
+      for (auto &param : *decl->getTemplateParameters()) {
+        param->dump();
+        auto genericParamDecl = Impl.createDeclWithClangNode<GenericTypeParamDecl>(
+            param, AccessLevel::Public, dc,
+            Impl.SwiftContext.getIdentifier(param->getName()),
+            Impl.importSourceLoc(param->getLocation()),
+            /*depth*/ 0, /*index*/ genericParams.size());
+        genericParams.push_back(genericParamDecl);
+      }
+      auto genericParamList = GenericParamList::create(
+          Impl.SwiftContext, loc, genericParams, loc);
+
       auto structDecl = Impl.createDeclWithClangNode<StructDecl>(
-      decl, AccessLevel::Public, Loc, name, Loc, None, nullptr, dc);
+        decl, AccessLevel::Public, loc, name, loc, None, genericParamList, dc);
       return structDecl;
     }
 
