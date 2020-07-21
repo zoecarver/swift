@@ -7,9 +7,15 @@ import StdlibUnittest
 
 var TemplatesTestSuite = TestSuite("TemplatesTestSuite")
 
-TemplatesTestSuite.test("without-definition") {
+TemplatesTestSuite.test("typedef-without-definition") {
   let magicNumber = MagicNumber()
   var wrappedMagicNumber = WrappedMagicNumberWithoutDefinition(t: magicNumber)
+  expectEqual(wrappedMagicNumber.callGetInt(), 17)
+}
+
+TemplatesTestSuite.test("without-definition") {
+  let magicNumber = MagicNumber()
+  var wrappedMagicNumber = MagicWrapper<MagicNumber>(t: magicNumber)
   expectEqual(wrappedMagicNumber.callGetInt(), 17)
 }
 
