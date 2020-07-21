@@ -1744,6 +1744,7 @@ namespace {
           
           return baseTy;
         } else {
+          llvm::errs() << "YOLOOO CODE SEARCH GEN WON\n";
           de.diagnose(expr->getSubExpr()->getLoc(), diag::not_a_generic_type,
                       meta->getInstanceType());
           de.diagnose(expr->getLAngleLoc(),

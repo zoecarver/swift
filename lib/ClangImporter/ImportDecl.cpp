@@ -4068,8 +4068,27 @@ namespace {
     }
 
     Decl *VisitTemplateDecl(const clang::TemplateDecl *decl) {
+      llvm::dbgs() << "YOHOOOOOO VISITING TEMPLATE DECL\n";
+      decl->dump();
       // Note: templates are not imported.
       return nullptr;
+    }
+
+    Decl *VisitClassTemplateDecl(const clang::ClassTemplateDecl *decl) {
+      llvm::dbgs() << "YOHOOOOOO VISITING CLASS TEMPLATE DECL\n";
+      decl->dump();
+      Optional<ImportedName> correctSwiftName;
+      auto importedName = importFullName(decl, correctSwiftName);
+      auto name = importedName.getDeclName().getBaseIdentifier();
+      if (name.empty())
+        return nullptr;
+      auto Loc = Impl.importSourceLoc(decl->getLocation());
+      auto dc = Impl.importDeclContextOf(
+          decl, importedName.getEffectiveContext());
+
+      auto structDecl = Impl.createDeclWithClangNode<StructDecl>(
+      decl, AccessLevel::Public, Loc, name, Loc, None, nullptr, dc);
+      return structDecl;
     }
 
     Decl *VisitUsingDecl(const clang::UsingDecl *decl) {
