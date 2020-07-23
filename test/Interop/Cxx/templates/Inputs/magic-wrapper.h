@@ -13,4 +13,6 @@ struct MagicNumber {
   int getInt() const { return 12; }
 };
 
+using WrappedMagicNumber = MagicWrapper<MagicNumber>;
+
 #endif // TEST_INTEROP_CXX_TEMPLATES_INPUTS_MAGIC_WRAPPER_H

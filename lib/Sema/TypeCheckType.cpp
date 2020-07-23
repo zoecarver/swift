@@ -751,21 +751,33 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
 
   if (decl->getClangDecl()) {
     llvm::errs() << "BUBUBUUUUUUUUUU TYPECHECKING CLANG DECL\n";
-    void *InsertPos = nullptr;
     auto clangDecl = decl->getClangDecl();
+    auto &astContext = decl->getASTContext();
+    auto &clangASTContext = clangDecl->getASTContext();
     if (auto classTemplateDecl =
             dyn_cast<clang::ClassTemplateDecl>(clangDecl)) {
+
+      SmallVector<clang::TemplateArgument, 2> templateArguments;
       for (auto &argTypeRepr : generic->getGenericArgs()) {
         argTypeRepr->dump();
         Type argType = resolution.resolveType(argTypeRepr);
         argType->dump();
-        auto *boundType = argType->castTo<AnyGenericType>();
-        auto argDecl = boundType->getDecl();
+        auto *genericType = argType->castTo<AnyGenericType>();
+        auto argDecl = genericType->getDecl();
         argDecl->dump();
-        if (argDecl->getClangDecl()) {
-          argDecl->getClangDecl()->dump();
-    }
-  }
+        if (auto *clangDecl = argDecl->getClangDecl()) {
+          clangDecl->dump();
+          auto *tagDecl = dyn_cast<clang::TagDecl>(clangDecl);
+          auto type = clangASTContext.getTagDeclType(tagDecl);
+          templateArguments.push_back(clang::TemplateArgument(type));
+        }
+      }
+
+      auto *clangModuleLoader = astContext.getClangModuleLoader();
+      auto structDecl = clangModuleLoader->instantiateTemplate(
+          const_cast<clang::ClassTemplateDecl *>(classTemplateDecl),
+          templateArguments);
+      return nullptr;
     }
   }
 

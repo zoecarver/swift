@@ -2711,6 +2711,28 @@ void ClangImporter::lookupRelatedEntity(
   }
 }
 
+swift::Decl *
+ClangImporter::instantiateTemplate(
+    clang::ClassTemplateDecl *decl,
+    ArrayRef<clang::TemplateArgument> arguments) {
+  void *InsertPos = nullptr;
+  auto *ctsd = const_cast<clang::ClassTemplateDecl *>(decl)
+                   ->findSpecialization(arguments, InsertPos);
+  if (ctsd) {
+    llvm::errs() << "BADUM BADUM BADUM BADUM WE HAVE THE INSTANTIATION\n";
+    ctsd->dump();
+    auto *swiftDecl = Impl.importDecl(decl, Impl.CurrentVersion);
+    if (swiftDecl) {
+      llvm::errs() << "BADUM BADUM BADUM BADUM WE HAVE IMPORTED INSTANTIATION\n";
+      swiftDecl->dump();
+      swiftDecl->getClangDecl()->dump();
+      return swiftDecl;
+    }
+  }
+
+  return nullptr;
+}
+
 void ClangModuleUnit::lookupVisibleDecls(ModuleDecl::AccessPathTy accessPath,
                                          VisibleDeclConsumer &consumer,
                                          NLKind lookupKind) const {

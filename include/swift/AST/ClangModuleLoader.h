@@ -13,8 +13,10 @@
 #ifndef SWIFT_AST_CLANG_MODULE_LOADER_H
 #define SWIFT_AST_CLANG_MODULE_LOADER_H
 
+#include "swift/AST/Decl.h"
 #include "swift/AST/ModuleLoader.h"
 #include "swift/Basic/TaggedUnion.h"
+#include "clang/AST/DeclTemplate.h"
 
 namespace clang {
 class ASTContext;
@@ -174,6 +176,12 @@ public:
   lookupRelatedEntity(StringRef clangName, ClangTypeKind kind,
                       StringRef relatedEntityKind,
                       llvm::function_ref<void(TypeDecl *)> receiver) = 0;
+  /// Look for declarations associated with the given name.
+  ///
+  /// \param name The name we're searching for.
+  virtual swift::Decl *
+  instantiateTemplate(clang::ClassTemplateDecl *decl,
+                      ArrayRef<clang::TemplateArgument> arguments) = 0;
 
   /// Try to parse the string as a Clang function type.
   ///
