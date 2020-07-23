@@ -753,10 +753,19 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
     llvm::errs() << "BUBUBUUUUUUUUUU TYPECHECKING CLANG DECL\n";
     void *InsertPos = nullptr;
     auto clangDecl = decl->getClangDecl();
-    if (auto classTemplateDecl = dyn_cast<clang::ClassTemplateDecl>(clangDecl)) {
-      generic->getGenericArgs
-      clang::ClassTemplateSpecializationDecl *Decl
-        = classTemplateDecl->findSpecialization(Converted, InsertPos);
+    if (auto classTemplateDecl =
+            dyn_cast<clang::ClassTemplateDecl>(clangDecl)) {
+      for (auto &argTypeRepr : generic->getGenericArgs()) {
+        argTypeRepr->dump();
+        Type argType = resolution.resolveType(argTypeRepr);
+        argType->dump();
+        auto *boundType = argType->castTo<AnyGenericType>();
+        auto argDecl = boundType->getDecl();
+        argDecl->dump();
+        if (argDecl->getClangDecl()) {
+          argDecl->getClangDecl()->dump();
+    }
+  }
     }
   }
 
