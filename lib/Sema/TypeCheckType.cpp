@@ -689,8 +689,6 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
   const auto options = resolution.getOptions();
   auto dc = resolution.getDeclContext();
   auto loc = comp->getNameLoc().getBaseNameLoc();
-  llvm::errs() << "YOUUUUUUUUU COMPONENT IDENT TYPE REPR\n";
-  comp->dump();
 
   auto *generic = dyn_cast<GenericIdentTypeRepr>(comp);
   if (!generic) {
@@ -727,8 +725,6 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
   // We must either have an unbound generic type, or a generic type alias.
   if (!type->is<UnboundGenericType>()) {
      if (!options.contains(TypeResolutionFlags::SilenceErrors)) {
-      llvm::errs() << "YOLOOO TYPECHECK TYPE WON\n";
-      type->dump();
       auto diag = diags.diagnose(loc, diag::not_a_generic_type, type);
 
       // Don't add fixit on module type; that isn't the right type regardless
@@ -750,7 +746,6 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
   auto *decl = unboundType->getDecl();
 
   if (decl->getClangDecl()) {
-    llvm::errs() << "BUBUBUUUUUUUUUU TYPECHECKING CLANG DECL\n";
     auto clangDecl = decl->getClangDecl();
     auto &astContext = decl->getASTContext();
     auto &clangASTContext = clangDecl->getASTContext();

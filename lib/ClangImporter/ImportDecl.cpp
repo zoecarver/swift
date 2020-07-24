@@ -3499,8 +3499,6 @@ namespace {
     }
 
     Decl *VisitTemplateTypeParmDecl(const clang::TemplateTypeParmDecl *decl) {
-      llvm::errs() << "HOHOHOOOOOO TEMPLATE TYPE PARM DECL\n";
-      decl->dump();
       // Note: templates are not imported.
       return nullptr;
     }
@@ -4054,37 +4052,27 @@ namespace {
     }
 
     Decl *VisitImplicitParamDecl(const clang::ImplicitParamDecl *decl) {
-      llvm::errs() << "HOHOHOOOOOO IMPLICIT TEMPLATE PARM DECL\n";
-      decl->dump();
       // Parameters are never directly imported.
       return nullptr;
     }
 
     Decl *VisitParmVarDecl(const clang::ParmVarDecl *decl) {
-      llvm::errs() << "HOHOHOOOOOO TEMPLATE PARM VAR DECL\n";
-      decl->dump();
       // Parameters are never directly imported.
       return nullptr;
     }
 
     Decl *
     VisitNonTypeTemplateParmDecl(const clang::NonTypeTemplateParmDecl *decl) {
-      llvm::errs() << "HOHOHOOOOOO NON TYPE TEMPLATE PARM DECL\n";
-      decl->dump();
       // Note: templates are not imported.
       return nullptr;
     }
 
     Decl *VisitTemplateDecl(const clang::TemplateDecl *decl) {
-      llvm::dbgs() << "YOHOOOOOO VISITING TEMPLATE DECL\n";
-      decl->dump();
       // Note: templates are not imported.
       return nullptr;
     }
 
     Decl *VisitClassTemplateDecl(const clang::ClassTemplateDecl *decl) {
-      llvm::dbgs() << "YOHOOOOOO VISITING CLASS TEMPLATE DECL\n";
-      decl->dump();
       Optional<ImportedName> correctSwiftName;
       auto importedName = importFullName(decl, correctSwiftName);
       auto name = importedName.getDeclName().getBaseIdentifier();
