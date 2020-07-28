@@ -303,15 +303,27 @@ TypeCheckSourceFileRequest::evaluate(Evaluator &eval, SourceFile *SF) const {
       TypeChecker::buildTypeRefinementContextHierarchy(*SF);
     }
 
-    // Type check the top-level elements of the source file.
-    for (auto D : SF->getTopLevelDecls()) {
-      if (auto *TLCD = dyn_cast<TopLevelCodeDecl>(D)) {
-        TypeChecker::typeCheckTopLevelCodeDecl(TLCD);
-        TypeChecker::contextualizeTopLevelCode(TLCD);
-      } else {
-        TypeChecker::typeCheckDecl(D);
+      // Type check the top-level elements of the source file.
+      for (auto D : SF->getTopLevelDecls()) {
+        if (Ctx.LangOpts.EnableCXXInterop) {
+          class TemplateInstantiator : public ExprVisitor<TemplateInstantiator> {
+            void visitDeclRefExpr(DeclRefExpr *decl) {
+              if (decl->getDecl()->getClangDecl()) {
+                llvm::errs() << "WOOHOOO LET'S INSTANTIATE\n";
+                decl->dump();
+              }
+            }
+          };
+          TemplateInstantiator instr;
+          instr.visit(D);
+        }
+        if (auto *TLCD = dyn_cast<TopLevelCodeDecl>(D)) {
+          TypeChecker::typeCheckTopLevelCodeDecl(TLCD);
+          TypeChecker::contextualizeTopLevelCode(TLCD);
+        } else {
+          TypeChecker::typeCheckDecl(D);
+        }
       }
-    }
 
     typeCheckDelayedFunctions(*SF);
   }
