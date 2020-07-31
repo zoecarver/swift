@@ -33,3 +33,11 @@ module EagerInstantiationProblems {
 module MagicWrapper {
   header "magic-wrapper.h"
 }
+
+module Mangling {
+  header "mangling.h"
+}
+
+module Linkage {
+  header "linkage.h"
+}
