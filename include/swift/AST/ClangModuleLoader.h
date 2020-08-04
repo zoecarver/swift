@@ -176,10 +176,8 @@ public:
   lookupRelatedEntity(StringRef clangName, ClangTypeKind kind,
                       StringRef relatedEntityKind,
                       llvm::function_ref<void(TypeDecl *)> receiver) = 0;
-  /// Look for declarations associated with the given name.
-  ///
-  /// \param name The name we're searching for.
-  virtual swift::Decl *
+  /// Instantiate and import class template.
+  virtual NominalTypeDecl *
   instantiateTemplate(clang::ClassTemplateDecl *decl,
                       ArrayRef<clang::TemplateArgument> arguments) = 0;
 

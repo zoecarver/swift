@@ -745,37 +745,6 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
   auto *unboundType = type->castTo<UnboundGenericType>();
   auto *decl = unboundType->getDecl();
 
-  if (decl->getClangDecl()) {
-    auto clangDecl = decl->getClangDecl();
-    auto &astContext = decl->getASTContext();
-    auto &clangASTContext = clangDecl->getASTContext();
-    if (auto classTemplateDecl =
-            dyn_cast<clang::ClassTemplateDecl>(clangDecl)) {
-
-      SmallVector<clang::TemplateArgument, 2> templateArguments;
-      for (auto &argTypeRepr : generic->getGenericArgs()) {
-        argTypeRepr->dump();
-        Type argType = resolution.resolveType(argTypeRepr);
-        argType->dump();
-        auto *genericType = argType->castTo<AnyGenericType>();
-        auto argDecl = genericType->getDecl();
-        argDecl->dump();
-        if (auto *clangDecl = argDecl->getClangDecl()) {
-          clangDecl->dump();
-          auto *tagDecl = dyn_cast<clang::TagDecl>(clangDecl);
-          auto type = clangASTContext.getTagDeclType(tagDecl);
-          templateArguments.push_back(clang::TemplateArgument(type));
-        }
-      }
-
-      auto *clangModuleLoader = astContext.getClangModuleLoader();
-      auto structDecl = clangModuleLoader->instantiateTemplate(
-          const_cast<clang::ClassTemplateDecl *>(classTemplateDecl),
-          templateArguments);
-      return nullptr;
-    }
-  }
-
   // Make sure we have the right number of generic arguments.
   // FIXME: If we have fewer arguments than we need, that might be okay, if
   // we're allowed to deduce the remaining arguments from context.
@@ -849,6 +818,39 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
     else
       diags.diagnose(loc, diag::use_of_void_pointer, "").
         fixItReplace(generic->getSourceRange(), "UnsafeRawPointer");
+  }
+
+  if (auto classTemplateDecl =
+          dyn_cast<clang::ClassTemplateDecl>(decl->getClangDecl())) {
+    SmallVector<clang::TemplateArgument, 2> templateArguments;
+    for (auto &argTypeRepr : generic->getGenericArgs()) {
+      Type argType = resolution.resolveType(argTypeRepr);
+      auto *clangDecl = argType->getAnyNominal()->getDecl()->getClangDecl();
+      if (clangDecl) {
+        if (auto *tagDecl = dyn_cast<clang::TagDecl>(clangDecl)) {
+          auto type =
+              classTemplateDecl->getASTContext().getTagDeclType(tagDecl);
+          templateArguments.push_back(clang::TemplateArgument(type));
+        } else {
+          // show arg is unexpected error
+          return ErrorType::get(ctx);
+        }
+      } else {
+        // show only clang types are supported as template args error
+        return ErrorType::get(ctx);
+      }
+    }
+
+    auto *clangModuleLoader = decl->getASTContext().getClangModuleLoader();
+    auto instantiatedDecl = clangModuleLoader->instantiateTemplate(
+        const_cast<clang::ClassTemplateDecl *>(classTemplateDecl),
+        templateArguments);
+    if (instantiatedDecl) {
+      return instantiatedDecl->getDeclaredInterfaceType();
+    } else {
+      // show instantiation failed error
+      return ErrorType::get(ctx);
+    }
   }
   return result;
 }

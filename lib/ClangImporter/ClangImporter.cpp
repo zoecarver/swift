@@ -2711,7 +2711,7 @@ void ClangImporter::lookupRelatedEntity(
   }
 }
 
-swift::Decl *
+NominalTypeDecl *
 ClangImporter::instantiateTemplate(
     clang::ClassTemplateDecl *decl,
     ArrayRef<clang::TemplateArgument> arguments) {
@@ -2719,14 +2719,9 @@ ClangImporter::instantiateTemplate(
   auto *ctsd = const_cast<clang::ClassTemplateDecl *>(decl)
                    ->findSpecialization(arguments, InsertPos);
   if (ctsd) {
-    llvm::errs() << "BADUM BADUM BADUM BADUM WE HAVE THE INSTANTIATION\n";
-    ctsd->dump();
-    auto *swiftDecl = Impl.importDecl(decl, Impl.CurrentVersion);
+    auto *swiftDecl = Impl.importDecl(ctsd, Impl.CurrentVersion);
     if (swiftDecl) {
-      llvm::errs() << "BADUM BADUM BADUM BADUM WE HAVE IMPORTED INSTANTIATION\n";
-      swiftDecl->dump();
-      swiftDecl->getClangDecl()->dump();
-      return swiftDecl;
+      return dyn_cast<NominalTypeDecl>(swiftDecl);
     }
   }
 
