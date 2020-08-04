@@ -13,9 +13,9 @@ TemplatesTestSuite.test("typedef-without-definition") {
   expectEqual(magicInt.getValuePlusArg(11), 28)
 }
 
-TemplatesTestSuite.test("without-definition") {
+TemplatesTestSuite.test("existing-specialization") {
   let myInt = IntWrapper(value: 18)
-  var magicInt = MagicWrapper<Int>(t: myInt)
+  var magicInt = MagicWrapper<IntWrapper>(t: myInt)
   expectEqual(magicInt.getValuePlusArg(12), 30)
 }
 

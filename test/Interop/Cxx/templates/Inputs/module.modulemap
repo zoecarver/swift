@@ -41,3 +41,7 @@ module Mangling {
 module Linkage {
   header "linkage.h"
 }
+
+module ClassTemplates {
+  header "class-templates.h"
+}

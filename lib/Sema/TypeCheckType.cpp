@@ -820,36 +820,38 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
         fixItReplace(generic->getSourceRange(), "UnsafeRawPointer");
   }
 
-  if (auto classTemplateDecl =
-          dyn_cast<clang::ClassTemplateDecl>(decl->getClangDecl())) {
-    SmallVector<clang::TemplateArgument, 2> templateArguments;
-    for (auto &argTypeRepr : generic->getGenericArgs()) {
-      Type argType = resolution.resolveType(argTypeRepr);
-      auto *clangDecl = argType->getAnyNominal()->getDecl()->getClangDecl();
-      if (clangDecl) {
-        if (auto *tagDecl = dyn_cast<clang::TagDecl>(clangDecl)) {
-          auto type =
-              classTemplateDecl->getASTContext().getTagDeclType(tagDecl);
-          templateArguments.push_back(clang::TemplateArgument(type));
+  if (auto clangDecl = decl->getClangDecl()) {
+    if (auto classTemplateDecl =
+            dyn_cast<clang::ClassTemplateDecl>(clangDecl)) {
+      SmallVector<clang::TemplateArgument, 2> templateArguments;
+      for (auto &argTypeRepr : generic->getGenericArgs()) {
+        Type argType = resolution.resolveType(argTypeRepr);
+        auto *clangDecl = argType->getAnyNominal()->getDecl()->getClangDecl();
+        if (clangDecl) {
+          if (auto *tagDecl = dyn_cast<clang::TagDecl>(clangDecl)) {
+            auto type =
+                classTemplateDecl->getASTContext().getTagDeclType(tagDecl);
+            templateArguments.push_back(clang::TemplateArgument(type));
+          } else {
+            diags.diagnose(loc, diag::cxx_class_instantiation_non_tag_argument);
+            return ErrorType::get(ctx);
+          }
         } else {
-          // show arg is unexpected error
+          diags.diagnose(loc, diag::cxx_class_instantiation_non_cxx_argument);
           return ErrorType::get(ctx);
         }
+      }
+
+      auto *clangModuleLoader = decl->getASTContext().getClangModuleLoader();
+      auto instantiatedDecl = clangModuleLoader->instantiateTemplate(
+          const_cast<clang::ClassTemplateDecl *>(classTemplateDecl),
+          templateArguments);
+      if (instantiatedDecl) {
+        return instantiatedDecl->getDeclaredInterfaceType();
       } else {
-        // show only clang types are supported as template args error
+        diags.diagnose(loc, diag::cxx_class_instantiation_failed);
         return ErrorType::get(ctx);
       }
-    }
-
-    auto *clangModuleLoader = decl->getASTContext().getClangModuleLoader();
-    auto instantiatedDecl = clangModuleLoader->instantiateTemplate(
-        const_cast<clang::ClassTemplateDecl *>(classTemplateDecl),
-        templateArguments);
-    if (instantiatedDecl) {
-      return instantiatedDecl->getDeclaredInterfaceType();
-    } else {
-      // show instantiation failed error
-      return ErrorType::get(ctx);
     }
   }
   return result;

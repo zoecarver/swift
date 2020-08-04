@@ -3881,6 +3881,10 @@ namespace {
       if (correctSwiftName)
         markAsVariant(result, *correctSwiftName);
 
+      if (decl->isInvalidDecl()) {
+        Impl.markUnavailable(result, "function marked as invalid by clang");
+      }
+
       return result;
     }
 
@@ -4090,8 +4094,6 @@ namespace {
       auto loc = Impl.importSourceLoc(decl->getLocation());
       auto dc = Impl.importDeclContextOf(
           decl, importedName.getEffectiveContext());
-
-      clang::ASTContext &ctx = decl->getASTContext();
 
       SmallVector<GenericTypeParamDecl *, 4> genericParams;
       for (auto &param : *decl->getTemplateParameters()) {
