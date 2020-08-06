@@ -4097,7 +4097,6 @@ namespace {
 
       SmallVector<GenericTypeParamDecl *, 4> genericParams;
       for (auto &param : *decl->getTemplateParameters()) {
-        param->dump();
         auto genericParamDecl = Impl.createDeclWithClangNode<GenericTypeParamDecl>(
             param, AccessLevel::Public, dc,
             Impl.SwiftContext.getIdentifier(param->getName()),
