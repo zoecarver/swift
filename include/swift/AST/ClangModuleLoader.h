@@ -13,7 +13,6 @@
 #ifndef SWIFT_AST_CLANG_MODULE_LOADER_H
 #define SWIFT_AST_CLANG_MODULE_LOADER_H
 
-#include "swift/AST/Decl.h"
 #include "swift/AST/ModuleLoader.h"
 #include "swift/Basic/TaggedUnion.h"
 #include "clang/AST/DeclTemplate.h"
