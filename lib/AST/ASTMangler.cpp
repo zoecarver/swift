@@ -534,6 +534,12 @@ std::string ASTMangler::mangleTypeForDebugger(Type Ty, const DeclContext *DC) {
   return finalize();
 }
 
+std::string ASTMangler::mangleTypeForTypeName(Type type) {
+  beginManglingWithoutPrefix();
+  appendType(type);
+  return finalize();
+}
+
 std::string ASTMangler::mangleDeclType(const ValueDecl *decl) {
   DWARFMangling = true;
   beginMangling();
@@ -2123,11 +2129,11 @@ void ASTMangler::appendAnyGenericType(const GenericTypeDecl *decl) {
     } else if (UseObjCRuntimeNames && protocol) {
       appendIdentifier(protocol->getObjCRuntimeNameAsString());
     } else if (auto ctsd = dyn_cast<clang::ClassTemplateSpecializationDecl>(namedDecl)) {
-      // If this is a `ClassTemplateSpecializationDecl` it means the decl was
+      // If this is a `ClassTemplateSpecializationDecl`, it was
       // imported as a Swift decl with `__CxxTemplateInst...` name.
-      // `ClassTemplateSpecializationDecl`'s name does not include names of
+      // `ClassTemplateSpecializationDecl`'s name does not include information about
       // template arguments, and in order to prevent name clashes we use the
-      // name of the Swift decl which does includes template argument names.
+      // name of the Swift decl which does include template arguments.
       appendIdentifier(nominal->getName().str());
     } else {
       appendIdentifier(namedDecl->getName());
@@ -2275,7 +2281,9 @@ void ASTMangler::appendFunctionSignature(AnyFunctionType *fn,
                                          const ValueDecl *forDecl) {
   appendFunctionResultType(fn->getResult(), forDecl);
   appendFunctionInputType(fn->getParams(), forDecl);
-  if (fn->throws())
+  if (fn->isAsync())
+    appendOperator("Y");
+  if (fn->isThrowing())
     appendOperator("K");
 }
 
