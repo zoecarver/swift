@@ -37,3 +37,15 @@ module Mangling {
 module LinkageOfSwiftSymbolsForImportedTypes {
   header "linkage-of-swift-symbols-for-imported-types.h"
 }
+
+module VariadicClassTemplate {
+  header "variadic-class-template.h"
+}
+
+module NonTypeTemplateParameter {
+  header "non-type-template-parameter.h"
+}
+
+module TemplateTemplateParameter {
+  header "template-template-parameter.h"
+}
