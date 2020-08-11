@@ -180,6 +180,10 @@ public:
   instantiateTemplate(clang::ClassTemplateDecl *decl,
                       ArrayRef<clang::TemplateArgument> arguments) = 0;
 
+  /// Lookup identifier for an already imported decl.
+  virtual Identifier
+  lookupIdentifier(const clang::IdentifierInfo* declName) = 0;
+
   /// Try to parse the string as a Clang function type.
   ///
   /// Returns null if there was a parsing failure.

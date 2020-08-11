@@ -2742,6 +2742,11 @@ ClangImporter::instantiateTemplate(
   return nullptr;
 }
 
+Identifier
+ClangImporter::lookupIdentifier(const clang::IdentifierInfo* declName) {
+  return Impl.importIdentifier(declName);
+}
+
 void ClangModuleUnit::lookupVisibleDecls(ModuleDecl::AccessPathTy accessPath,
                                          VisibleDeclConsumer &consumer,
                                          NLKind lookupKind) const {

@@ -1,6 +1,10 @@
 import ClassTemplates
 
-public func WOLOLOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO() -> MagicWrapper<IntWrapper> {
-  var t = IntWrapper(value: 42)
+public func makeWrappedMagicNumber() -> MagicWrapper<IntWrapper> {
+  let t = IntWrapper(value: 42)
   return MagicWrapper<IntWrapper>(t: t)
+}
+
+public func readWrappedMagicNumber(_ i : inout MagicWrapper<IntWrapper>) -> CInt {
+  return i.getValuePlusArg(13)
 }

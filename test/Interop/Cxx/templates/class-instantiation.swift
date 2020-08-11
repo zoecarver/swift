@@ -14,7 +14,7 @@ TemplatesTestSuite.test("nonexisting-specialization") {
 }
 
 TemplatesTestSuite.test("swift-template-arg-not-supported") {
-//   var magicInt = MagicWrapper<String>(t: "asdf") 
+//   var magicInt = MagicWrapper<String>(t: "asdf")
 }
 
 TemplatesTestSuite.test("clang-errors-reported-on-instantiation") {
