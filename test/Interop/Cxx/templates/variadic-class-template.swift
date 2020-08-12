@@ -10,9 +10,15 @@ var TemplatesTestSuite = TestSuite("TemplatesTestSuite")
 TemplatesTestSuite.test("variadic-class-template") {
   let a = IntWrapper(value: 10)
   let b = IntWrapper(value: 20)
-  let pair = Pair(a, b)
-  expectEqual(pair.get(), 10)
-  expectEqual(pair.rest().get(), 20)
+
+  var pair = Pair()
+  pair.set(a, b)
+
+  var pairA = pair.first()
+  var restB = pair.rest()
+  var pairB = restB.first()
+  expectEqual(pairA.getValue(), 10)
+  expectEqual(pairB.getValue(), 20)
 }
 
 runAllTests()

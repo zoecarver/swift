@@ -3,14 +3,21 @@
 
 template <class... Ts> struct Tuple {};
 
+template <>
+struct Tuple<> {
+  void set() {}
+};
+
 template <class T, class... Ts>
 struct Tuple<T, Ts...> : Tuple<Ts...> {
-  Tuple(T t, Ts... ts) : Tuple<Ts...>(ts...), t(t) {}
+  Tuple(T t, Ts... ts) : Tuple<Ts...>(ts...), _t(t) {}
 
-  T get() { return t; }
-  T rest() { return Tuple<Ts...>::get(); }
+  void set(T t, Ts... ts) { _t = t; Tuple<Ts...>::set(ts...); }
 
-  T t;
+  T first() { return _t; }
+  Tuple<Ts...> rest() { return *this; }
+
+  T _t;
 };
 
 struct IntWrapper {
