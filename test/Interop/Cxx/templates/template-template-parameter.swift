@@ -2,15 +2,16 @@
 //
 // REQUIRES: executable_test
 
-import NonTypeParameter
+import TemplateTemplateParameter
 import StdlibUnittest
 
 var TemplatesTestSuite = TestSuite("TemplatesTestSuite")
 
 TemplatesTestSuite.test("variadic-class-template") {
-  let a = IntWrapper(value: 42)
-  let hohoho = Hohoho()
-  hohoho.i = a
+  let myInt = IntWrapper(value: 42)
+  var magicInt = WrappedMagicInt(t: myInt)
+  var templatedWrappedMagicInt = TemplatedWrappedMagicInt(i: magicInt)
+  expectEqual(templatedWrappedMagicInt.getValuePlusTwiceTheArg(10), 62)
 }
 
 runAllTests()
