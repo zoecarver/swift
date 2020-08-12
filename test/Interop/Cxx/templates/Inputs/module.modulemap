@@ -42,8 +42,8 @@ module VariadicClassTemplate {
   header "variadic-class-template.h"
 }
 
-module NonTypeTemplateParameter {
-  header "non-type-template-parameter.h"
+module NonTypeParameter {
+  header "non-type-parameter.h"
 }
 
 module TemplateTemplateParameter {

@@ -8,9 +8,8 @@ import StdlibUnittest
 var TemplatesTestSuite = TestSuite("TemplatesTestSuite")
 
 TemplatesTestSuite.test("variadic-class-template") {
-  let pair = MagicIntPair()
-  pair.t = [10, 20]
-  expectEqual(pair.t, [10, 20])
+  var pair = MagicIntPair(t: (1, 2))
+  expectEqual(pair.t, (1, 2))
 }
 
 runAllTests()
