@@ -45,3 +45,15 @@ module LinkageOfSwiftSymbolsForImportedTypes {
 module ClassTemplates {
   header "class-templates.h"
 }
+
+module VariadicClassTemplate {
+  header "variadic-class-template.h"
+}
+
+module NonTypeParameter {
+  header "non-type-parameter.h"
+}
+
+module TemplateTemplateParameter {
+  header "template-template-parameter.h"
+}
