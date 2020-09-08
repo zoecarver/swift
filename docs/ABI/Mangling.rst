@@ -176,6 +176,11 @@ Globals
   global ::= global 'MJ'                 // noncanonical specialized generic type metadata instantiation cache associated with global
   global ::= global 'MN'                 // noncanonical specialized generic type metadata for global
 
+  #if SWIFT_RUNTIME_VERSION >= 5.4
+    global ::= context (decl-name '_')+ 'WZ' // global variable one-time initialization function
+    global ::= context (decl-name '_')+ 'Wz' // global variable one-time initialization token
+  #endif
+
 A direct symbol resolves directly to the address of an object.  An
 indirect symbol resolves to the address of a pointer to the object.
 They are distinct manglings to make a certain class of bugs
@@ -1133,9 +1138,9 @@ module:
 
   typedef MagicWrapper<MagicNumber> WrappedMagicNumber;
 
-``WrappedMagicNumber`` will be imported as a typealias for a struct
+``WrappedMagicNumber`` is imported as a typealias for struct
 ``__CxxTemplateInst12MagicWrapperI11MagicNumberE``. Interface of the imported
-module will look as follows:
+module looks as follows:
 
 .. code-block:: swift
 
