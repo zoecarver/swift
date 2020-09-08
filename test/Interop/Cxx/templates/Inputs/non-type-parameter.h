@@ -8,4 +8,4 @@ struct MagicArray {
 
 typedef MagicArray<int, 2> MagicIntPair;
 
-#endif // TEST_INTEROP_CXX_TEMPLATES_INPUTS_NON_TYPE_PARAMETER_H
+#endif  // TEST_INTEROP_CXX_TEMPLATES_INPUTS_NON_TYPE_PARAMETER_H
