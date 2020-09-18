@@ -375,7 +375,7 @@ class LambdaDeclConsumer : public VisibleDeclConsumer {
 public:
   LambdaDeclConsumer(Fn &&callback) : Callback(std::move(callback)) {}
 
-  void foundDecl(ValueDecl *VD, DeclVisibilityKind reason, DynamicLookupInfo) {
+  void foundDecl(ValueDecl *VD, DeclVisibilityKind reason, DynamicLookupInfo) override {
     Callback(VD, reason);
   }
 };
@@ -511,14 +511,6 @@ void recordLookupOfTopLevelName(DeclContext *topLevelContext, DeclName name,
                                 bool isCascading);
 
 } // end namespace namelookup
-
-/// Retrieve the set of nominal type declarations that are directly
-/// referenced in the given \c typeRepr, looking through typealiases.
-/// 
-/// \param dc The \c DeclContext from which to perform lookup.
-TinyPtrVector<NominalTypeDecl *>
-getDirectlyReferencedNominalTypeDecls(ASTContext &ctx, TypeRepr *typeRepr,
-                                      DeclContext *dc, bool &anyObject);
 
 /// Retrieve the set of nominal type declarations that are directly
 /// "inherited" by the given declaration at a particular position in the
@@ -748,8 +740,6 @@ public:
     assert(Mem);
     return Mem;
   }
-
-  static bool areInactiveIfConfigClausesSupported();
 
 private:
   static ast_scope::ASTSourceFileScope *createScopeTree(SourceFile *);
