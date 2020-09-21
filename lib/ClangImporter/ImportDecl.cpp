@@ -3560,7 +3560,7 @@ namespace {
       Impl.getClangSema().InstantiateClassTemplateSpecializationMembers(
           def->getLocation(), def, clang::TSK_ExplicitInstantiationDefinition);
 
-      return VisitRecordDecl(def);
+      return VisitCXXRecordDecl(def);
     }
 
     Decl *VisitClassTemplatePartialSpecializationDecl(
