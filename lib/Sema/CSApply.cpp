@@ -916,6 +916,23 @@ namespace {
 
       Expr *selfOpenedRef = selfParamRef;
 
+      // If the 'self' parameter has non-trivial ownership, adjust the
+      // argument accordingly.
+      switch (selfParam.getValueOwnership()) {
+      case ValueOwnership::Default:
+      case ValueOwnership::InOut:
+        break;
+
+      case ValueOwnership::Owned:
+      case ValueOwnership::Shared:
+        auto selfArgTy = ParenType::get(context,
+                                        selfParam.getPlainType(),
+                                        selfParam.getParameterFlags());
+        selfOpenedRef->setType(selfArgTy);
+        cs.cacheType(selfOpenedRef);
+        break;
+      }
+
       if (selfParamTy->hasOpenedExistential()) {
         // If we're opening an existential:
         // - the type of 'ref' inside the closure is written in terms of the
@@ -931,31 +948,10 @@ namespace {
       }
 
       // (Self) -> ...
-      ApplyExpr *selfCall;
-
-      // We build either a CallExpr or a DotSyntaxCallExpr depending on whether
-      // the base is implicit or not. This helps maintain some invariants around
-      // source ranges.
-      if (selfParamRef->isImplicit()) {
-        selfCall =
-            CallExpr::createImplicit(context, ref, selfOpenedRef, {},
-                                     [&](Expr *E) { return cs.getType(E); });
-        selfCall->setType(refTy->getResult());
-        cs.cacheType(selfCall);
-
-        // FIXME: This is a holdover from the old tuple-based function call
-        // representation.
-        auto selfArgTy = ParenType::get(context,
-                                        selfParam.getPlainType(),
-                                        selfParam.getParameterFlags());
-        selfCall->getArg()->setType(selfArgTy);
-        cs.cacheType(selfCall->getArg());
-      } else {
-        selfCall = new (context) DotSyntaxCallExpr(ref, SourceLoc(), selfOpenedRef);
-        selfCall->setImplicit(false);
-        selfCall->setType(refTy->getResult());
-        cs.cacheType(selfCall);
-      }
+      ApplyExpr *selfCall = new (context) DotSyntaxCallExpr(
+          ref, SourceLoc(), selfOpenedRef);
+      selfCall->setType(refTy->getResult());
+      cs.cacheType(selfCall);
 
       if (selfParamRef->isSuperExpr())
         selfCall->setIsSuper(true);
@@ -1061,7 +1057,6 @@ namespace {
                          AccessSemantics semantics) {
       auto choice = overload.choice;
       auto openedType = overload.openedType;
-      auto openedFullType = overload.openedFullType;
 
       ValueDecl *member = choice.getDecl();
 
@@ -1097,13 +1092,15 @@ namespace {
         return result;
       }
 
+      auto refTy = simplifyType(overload.openedFullType);
+
       // If we're referring to the member of a module, it's just a simple
       // reference.
       if (baseTy->is<ModuleType>()) {
         assert(semantics == AccessSemantics::Ordinary &&
                "Direct property access doesn't make sense for this");
         auto ref = new (context) DeclRefExpr(memberRef, memberLoc, Implicit);
-        cs.setType(ref, simplifyType(openedFullType));
+        cs.setType(ref, refTy);
         ref->setFunctionRefKind(choice.getFunctionRefKind());
         auto *DSBI = cs.cacheType(new (context) DotSyntaxBaseIgnoredExpr(
             base, dotLoc, ref, cs.getType(ref)));
@@ -1113,8 +1110,6 @@ namespace {
       bool isUnboundInstanceMember =
         (!baseIsInstance && member->isInstanceMember());
       bool isPartialApplication = shouldBuildCurryThunk(choice, baseIsInstance);
-
-      auto refTy = simplifyType(openedFullType);
 
       // The formal type of the 'self' value for the member's declaration.
       Type containerTy = getBaseType(refTy->castTo<FunctionType>());
@@ -1278,8 +1273,8 @@ namespace {
           = new (context) MemberRefExpr(base, dotLoc, memberRef,
                                         memberLoc, Implicit, semantics);
         memberRefExpr->setIsSuper(isSuper);
+        cs.setType(memberRefExpr, refTy->castTo<FunctionType>()->getResult());
 
-        cs.setType(memberRefExpr, simplifyType(openedType));
         Expr *result = memberRefExpr;
         closeExistential(result, locator);
 
@@ -7132,7 +7127,7 @@ ExprRewriter::buildDynamicCallable(ApplyExpr *apply, SelectedOverload selected,
 
   // Construct expression referencing the `dynamicallyCall` method.
   auto member = buildMemberRef(fn, SourceLoc(), selected,
-                               DeclNameLoc(method->getNameLoc()), loc, loc,
+                               DeclNameLoc(), loc, loc,
                                /*implicit=*/true, AccessSemantics::Ordinary);
 
   // Construct argument to the method (either an array or dictionary
@@ -8016,8 +8011,7 @@ static Optional<SolutionApplicationTarget> applySolutionToForEachStmt(
     name += "$generator";
 
     iterator = new (ctx) VarDecl(
-        /*IsStatic*/ false, VarDecl::Introducer::Var,
-        /*IsCaptureList*/ false, stmt->getInLoc(),
+        /*IsStatic*/ false, VarDecl::Introducer::Var, stmt->getInLoc(),
         ctx.getIdentifier(name), dc);
     iterator->setInterfaceType(
         forEachStmtInfo.iteratorType->mapTypeOutOfContext());
@@ -8407,6 +8401,15 @@ ProtocolConformanceRef Solution::resolveConformance(
   }
 
   return ProtocolConformanceRef::forInvalid();
+}
+
+bool Solution::hasType(ASTNode node) const {
+  auto result = nodeTypes.find(node);
+  if (result != nodeTypes.end())
+    return true;
+
+  auto &cs = getConstraintSystem();
+  return cs.hasType(node);
 }
 
 Type Solution::getType(ASTNode node) const {

@@ -2199,25 +2199,25 @@ void PrintAST::visitImportDecl(ImportDecl *decl) {
   getModuleEntities(decl, ModuleEnts);
 
   ArrayRef<ModuleEntity> Mods = ModuleEnts;
-  interleave(decl->getFullAccessPath(),
-             [&](const ImportDecl::AccessPathElement &Elem) {
-               if (!Mods.empty()) {
-                 Identifier Name = Elem.Item;
-                 if (Options.MapCrossImportOverlaysToDeclaringModule) {
-                   if (auto *MD = Mods.front().getAsSwiftModule()) {
-                     ModuleDecl *Declaring = const_cast<ModuleDecl*>(MD)
-                       ->getDeclaringModuleIfCrossImportOverlay();
-                     if (Declaring)
-                       Name = Declaring->getName();
-                   }
-                 }
-                 Printer.printModuleRef(Mods.front(), Name);
-                 Mods = Mods.slice(1);
-               } else {
-                 Printer << Elem.Item.str();
-               }
-             },
-             [&] { Printer << "."; });
+  llvm::interleave(decl->getImportPath(),
+                   [&](const ImportPath::Element &Elem) {
+                     if (!Mods.empty()) {
+                       Identifier Name = Elem.Item;
+                       if (Options.MapCrossImportOverlaysToDeclaringModule) {
+                         if (auto *MD = Mods.front().getAsSwiftModule()) {
+                           ModuleDecl *Declaring = const_cast<ModuleDecl*>(MD)
+                             ->getDeclaringModuleIfCrossImportOverlay();
+                           if (Declaring)
+                             Name = Declaring->getName();
+                         }
+                       }
+                       Printer.printModuleRef(Mods.front(), Name);
+                       Mods = Mods.slice(1);
+                     } else {
+                       Printer << Elem.Item.str();
+                     }
+                   },
+                   [&] { Printer << "."; });
 }
 
 static void printExtendedTypeName(Type ExtendedType, ASTPrinter &Printer,
@@ -3822,8 +3822,15 @@ public:
   void visitHoleType(HoleType *T) {
     if (Options.PrintTypesForDebugging) {
       Printer << "<<hole for ";
-      auto originatorTy = T->getOriginatorType();
-      visit(Type(reinterpret_cast<TypeBase *>(originatorTy.getOpaqueValue())));
+      auto originator = T->getOriginator();
+      if (auto *typeVar = originator.dyn_cast<TypeVariableType *>()) {
+        visit(typeVar);
+      } else if (auto *VD = originator.dyn_cast<VarDecl *>()) {
+        Printer << "decl = ";
+        Printer << VD->getName();
+      } else {
+        visit(originator.get<DependentMemberType *>());
+      }
       Printer << ">>";
     } else {
       Printer << "<<hole>>";
@@ -4053,8 +4060,8 @@ public:
           info.getSILRepresentation() == SILFunctionType::Representation::Thick)
         return;
 
-      bool printNameOnly = Options.PrintFunctionRepresentationAttrs ==
-                           PrintOptions::FunctionRepresentationMode::NameOnly;
+      bool printClangType = Options.PrintFunctionRepresentationAttrs ==
+                            PrintOptions::FunctionRepresentationMode::Full;
       Printer.callPrintStructurePre(PrintStructureKind::BuiltinAttribute);
       Printer.printAttrName("@convention");
       Printer << "(";
@@ -4067,13 +4074,13 @@ public:
         break;
       case SILFunctionType::Representation::Block:
         Printer << "block";
+        if (printClangType && !info.getClangTypeInfo().empty())
+          printCType(Ctx, Printer, info);
         break;
       case SILFunctionType::Representation::CFunctionPointer:
         Printer << "c";
-        // [TODO: Clang-type-plumbing] Remove the second check.
-        if (printNameOnly || info.getClangTypeInfo().empty())
-          break;
-        printCType(Ctx, Printer, info);
+        if (printClangType && !info.getClangTypeInfo().empty())
+          printCType(Ctx, Printer, info);
         break;
       case SILFunctionType::Representation::Method:
         Printer << "method";
@@ -4120,8 +4127,8 @@ public:
           info.getRepresentation() == SILFunctionType::Representation::Thick)
         break;
 
-      bool printNameOnly = Options.PrintFunctionRepresentationAttrs ==
-                           PrintOptions::FunctionRepresentationMode::NameOnly;
+      bool printClangType = Options.PrintFunctionRepresentationAttrs ==
+                            PrintOptions::FunctionRepresentationMode::Full;
       Printer.callPrintStructurePre(PrintStructureKind::BuiltinAttribute);
       Printer.printAttrName("@convention");
       Printer << "(";
@@ -4133,13 +4140,13 @@ public:
         break;
       case SILFunctionType::Representation::Block:
         Printer << "block";
+        if (printClangType)
+          printCType(Ctx, Printer, info);
         break;
       case SILFunctionType::Representation::CFunctionPointer:
         Printer << "c";
-        // [TODO: Clang-type-plumbing] Remove the second check.
-        if (printNameOnly || info.getClangTypeInfo().empty())
-          break;
-        printCType(Ctx, Printer, info);
+        if (printClangType)
+          printCType(Ctx, Printer, info);
         break;
       case SILFunctionType::Representation::Method:
         Printer << "method";

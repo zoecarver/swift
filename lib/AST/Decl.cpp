@@ -24,6 +24,7 @@
 #include "swift/AST/DiagnosticsSema.h"
 #include "swift/AST/ExistentialLayout.h"
 #include "swift/AST/Expr.h"
+#include "swift/AST/ForeignAsyncConvention.h"
 #include "swift/AST/ForeignErrorConvention.h"
 #include "swift/AST/GenericEnvironment.h"
 #include "swift/AST/GenericSignature.h"
@@ -433,9 +434,15 @@ bool Decl::isInvalid() const {
   case DeclKind::Constructor:
   case DeclKind::Destructor:
   case DeclKind::Func:
-  case DeclKind::Accessor:
   case DeclKind::EnumElement:
     return cast<ValueDecl>(this)->getInterfaceType()->hasError();
+
+  case DeclKind::Accessor: {
+    auto *AD = cast<AccessorDecl>(this);
+    if (AD->hasInterfaceType() && AD->getInterfaceType()->hasError())
+      return true;
+    return AD->getStorage()->isInvalid();
+  }
   }
 
   llvm_unreachable("Unknown decl kind");
@@ -959,6 +966,21 @@ void GenericParamList::setDeclContext(DeclContext *dc) {
     param->setDeclContext(dc);
 }
 
+GenericTypeParamDecl *GenericParamList::lookUpGenericParam(
+    Identifier name) const {
+  for (const auto *innerParams = this;
+       innerParams != nullptr;
+       innerParams = innerParams->getOuterParameters()) {
+    for (auto *paramDecl : *innerParams) {
+      if (name == paramDecl->getName()) {
+        return const_cast<GenericTypeParamDecl *>(paramDecl);
+      }
+    }
+  }
+
+  return nullptr;
+}
+
 TrailingWhereClause::TrailingWhereClause(
                        SourceLoc whereLoc,
                        ArrayRef<RequirementRepr> requirements)
@@ -1053,13 +1075,13 @@ SourceRange GenericContext::getGenericTrailingWhereClauseSourceRange() const {
 ImportDecl *ImportDecl::create(ASTContext &Ctx, DeclContext *DC,
                                SourceLoc ImportLoc, ImportKind Kind,
                                SourceLoc KindLoc,
-                               ArrayRef<AccessPathElement> Path,
+                               ImportPath Path,
                                ClangNode ClangN) {
   assert(!Path.empty());
   assert(Kind == ImportKind::Module || Path.size() > 1);
   assert(ClangN.isNull() || ClangN.getAsModule() ||
          isa<clang::ImportDecl>(ClangN.getAsDecl()));
-  size_t Size = totalSizeToAlloc<AccessPathElement>(Path.size());
+  size_t Size = totalSizeToAlloc<ImportPath::Element>(Path.size());
   void *ptr = allocateMemoryForDecl<ImportDecl>(Ctx, Size, !ClangN.isNull());
   auto D = new (ptr) ImportDecl(DC, ImportLoc, Kind, KindLoc, Path);
   if (ClangN)
@@ -1068,14 +1090,14 @@ ImportDecl *ImportDecl::create(ASTContext &Ctx, DeclContext *DC,
 }
 
 ImportDecl::ImportDecl(DeclContext *DC, SourceLoc ImportLoc, ImportKind K,
-                       SourceLoc KindLoc, ArrayRef<AccessPathElement> Path)
+                       SourceLoc KindLoc, ImportPath Path)
   : Decl(DeclKind::Import, DC), ImportLoc(ImportLoc), KindLoc(KindLoc) {
   Bits.ImportDecl.NumPathElements = Path.size();
   assert(Bits.ImportDecl.NumPathElements == Path.size() && "Truncation error");
   Bits.ImportDecl.ImportKind = static_cast<unsigned>(K);
   assert(getImportKind() == K && "not enough bits for ImportKind");
   std::uninitialized_copy(Path.begin(), Path.end(),
-                          getTrailingObjects<AccessPathElement>());
+                          getTrailingObjects<ImportPath::Element>());
 }
 
 ImportKind ImportDecl::getBestImportKind(const ValueDecl *VD) {
@@ -1538,12 +1560,6 @@ VarDecl *PatternBindingEntry::getAnchoringVarDecl() const {
   return variables[0];
 }
 
-unsigned PatternBindingEntry::getNumBoundVariables() const {
-  unsigned varCount = 0;
-  getPattern()->forEachVariable([&](VarDecl *) { ++varCount; });
-  return varCount;
-}
-
 SourceLoc PatternBindingEntry::getLastAccessorEndLoc() const {
   SourceLoc lastAccessorEnd;
   getPattern()->forEachVariable([&](VarDecl *var) {
@@ -1645,7 +1661,8 @@ void PatternBindingDecl::setPattern(unsigned i, Pattern *P,
   // PatternBindingDecl as their parent.
   if (P)
     P->forEachVariable([&](VarDecl *VD) {
-      VD->setParentPatternBinding(this);
+      if (!VD->isCaptureList())
+        VD->setParentPatternBinding(this);
     });
 }
 
@@ -1997,9 +2014,10 @@ getDirectReadWriteAccessStrategy(const AbstractStorageDecl *storage) {
   case ReadWriteImplKind::Modify:
     return AccessStrategy::getAccessor(AccessorKind::Modify,
                                        /*dispatch*/ false);
-  case ReadWriteImplKind::StoredWithSimpleDidSet:
-  case ReadWriteImplKind::InheritedWithSimpleDidSet:
-    if (storage->requiresOpaqueModifyCoroutine()) {
+  case ReadWriteImplKind::StoredWithDidSet:
+  case ReadWriteImplKind::InheritedWithDidSet:
+    if (storage->requiresOpaqueModifyCoroutine() &&
+        storage->getParsedAccessor(AccessorKind::DidSet)->isSimpleDidSet()) {
       return AccessStrategy::getAccessor(AccessorKind::Modify,
                                          /*dispatch*/ false);
     } else {
@@ -2451,7 +2469,11 @@ bool swift::conflicting(const OverloadSignature& sig1,
     return !((sig1.IsVariable && !sig2.Name.getArgumentNames().empty()) ||
              (sig2.IsVariable && !sig1.Name.getArgumentNames().empty()));
   }
-  
+
+  // If one is asynchronous and the other is not, they can't conflict.
+  if (sig1.HasAsync != sig2.HasAsync)
+    return false;
+
   // Note that we intentionally ignore the HasOpaqueReturnType bit here.
   // For declarations that can't be overloaded by type, we want them to be
   // considered conflicting independent of their type.
@@ -2592,6 +2614,7 @@ mapSignatureExtInfo(AnyFunctionType::ExtInfo info,
       .withRepresentation(info.getRepresentation())
       .withAsync(info.isAsync())
       .withThrows(info.isThrowing())
+      .withClangFunctionType(info.getClangTypeInfo().getType())
       .build();
 }
 
@@ -2674,6 +2697,8 @@ OverloadSignature ValueDecl::getOverloadSignature() const {
   signature.IsTypeAlias = isa<TypeAliasDecl>(this);
   signature.HasOpaqueReturnType =
                        !signature.IsVariable && (bool)getOpaqueResultTypeDecl();
+  signature.HasAsync = isa<AbstractFunctionDecl>(this) &&
+    cast<AbstractFunctionDecl>(this)->hasAsync();
 
   // Unary operators also include prefix/postfix.
   if (auto func = dyn_cast<FuncDecl>(this)) {
@@ -4215,6 +4240,13 @@ GetDestructorRequest::evaluate(Evaluator &evaluator, ClassDecl *CD) const {
   return DD;
 }
 
+bool ClassDecl::isActor() const {
+  auto mutableThis = const_cast<ClassDecl *>(this);
+  return evaluateOrDefault(getASTContext().evaluator,
+                           IsActorRequest{mutableThis},
+                           false);
+}
+
 bool ClassDecl::hasMissingDesignatedInitializers() const {
   return evaluateOrDefault(
       getASTContext().evaluator,
@@ -4928,12 +4960,13 @@ ProtocolDecl::findProtocolSelfReferences(const ValueDecl *value,
     return ::findProtocolSelfReferences(this, type,
                                         skipAssocTypes);
   } else {
-    if (::findProtocolSelfReferences(this, type,
-                                     skipAssocTypes)) {
-      return SelfReferenceKind::Other();
-    }
-    return SelfReferenceKind::None();
+    assert(isa<VarDecl>(value));
+
+    return ::findProtocolSelfReferences(this, type,
+                                        skipAssocTypes);
   }
+
+  return SelfReferenceKind::None();
 }
 
 bool ProtocolDecl::isAvailableInExistential(const ValueDecl *decl) const {
@@ -5363,16 +5396,14 @@ Type AbstractStorageDecl::getValueInterfaceType() const {
 }
 
 VarDecl::VarDecl(DeclKind kind, bool isStatic, VarDecl::Introducer introducer,
-                 bool isCaptureList, SourceLoc nameLoc, Identifier name,
+                 SourceLoc nameLoc, Identifier name,
                  DeclContext *dc, StorageIsMutable_t supportsMutation)
   : AbstractStorageDecl(kind, isStatic, dc, name, nameLoc, supportsMutation)
 {
   Bits.VarDecl.Introducer = unsigned(introducer);
-  Bits.VarDecl.IsCaptureList = isCaptureList;
   Bits.VarDecl.IsSelfParamCapture = false;
   Bits.VarDecl.IsDebuggerVar = false;
   Bits.VarDecl.IsLazyStorageProperty = false;
-  Bits.VarDecl.HasNonPatternBindingInit = false;
   Bits.VarDecl.IsPropertyWrapperBackingProperty = false;
   Bits.VarDecl.IsTopLevelGlobal = false;
 }
@@ -5395,22 +5426,21 @@ bool VarDecl::isSettable(const DeclContext *UseDC,
   if (!isLet())
     return supportsMutation();
 
+  //
+  // All the remaining logic handles the special cases where you can
+  // assign a 'let'.
+  //
+
   // Debugger expression 'let's are initialized through a side-channel.
   if (isDebuggerVar())
     return false;
 
-  // We have a 'let'; we must be checking settability from a specific
-  // DeclContext to go on further.
+  // 'let's are only ever settable from a specific DeclContext.
   if (UseDC == nullptr)
     return false;
-
-  // If the decl has a value bound to it but has no PBD, then it is
-  // initialized.
-  if (hasNonPatternBindingInit())
-    return false;
   
-  // Properties in structs/classes are only ever mutable in their designated
-  // initializer(s).
+  // 'let' properties in structs/classes are only ever settable in their
+  // designated initializer(s).
   if (isInstanceMember()) {
     auto *CD = dyn_cast<ConstructorDecl>(UseDC);
     if (!CD) return false;
@@ -5440,7 +5470,12 @@ bool VarDecl::isSettable(const DeclContext *UseDC,
     return true;
   }
 
-  // If the decl has an explicitly written initializer with a pattern binding,
+  // If the 'let' has a value bound to it but has no PBD, then it is
+  // already initializedand not settable.
+  if (getParentPatternBinding() == nullptr)
+    return false;
+
+  // If the 'let' has an explicitly written initializer with a pattern binding,
   // then it isn't settable.
   if (isParentInitialized())
     return false;
@@ -6059,8 +6094,7 @@ ParamDecl::ParamDecl(SourceLoc specifierLoc,
                      DeclContext *dc)
     : VarDecl(DeclKind::Param,
               /*IsStatic*/ false,
-              VarDecl::Introducer::Let,
-              /*IsCaptureList*/ false, parameterNameLoc, parameterName, dc,
+              VarDecl::Introducer::Let, parameterNameLoc, parameterName, dc,
               StorageIsNotMutable),
       ArgumentNameAndDestructured(argumentName, false),
       ParameterNameLoc(parameterNameLoc),
@@ -6758,6 +6792,17 @@ bool AbstractFunctionDecl::isAsyncHandler() const {
                            false);
 }
 
+bool AbstractFunctionDecl::canBeAsyncHandler() const {
+  auto func = dyn_cast<FuncDecl>(this);
+  if (!func)
+    return false;
+
+  auto mutableFunc = const_cast<FuncDecl *>(func);
+  return evaluateOrDefault(getASTContext().evaluator,
+                           CanBeAsyncHandlerRequest{mutableFunc},
+                           false);
+}
+
 BraceStmt *AbstractFunctionDecl::getBody(bool canSynthesize) const {
   if ((getBodyKind() == BodyKind::Synthesize ||
        getBodyKind() == BodyKind::Unparsed) &&
@@ -6777,6 +6822,13 @@ BraceStmt *AbstractFunctionDecl::getBody(bool canSynthesize) const {
   return evaluateOrDefault(ctx.evaluator,
                            ParseAbstractFunctionBodyRequest{mutableThis},
                            nullptr);
+}
+
+BraceStmt *AbstractFunctionDecl::getTypecheckedBody() const {
+  auto &ctx = getASTContext();
+  auto *mutableThis = const_cast<AbstractFunctionDecl *>(this);
+  return evaluateOrDefault(
+      ctx.evaluator, TypeCheckFunctionBodyRequest{mutableThis}, nullptr);
 }
 
 void AbstractFunctionDecl::setBody(BraceStmt *S, BodyKind NewBodyKind) {
@@ -6910,10 +6962,13 @@ AbstractFunctionDecl::getObjCSelector(DeclName preferredName,
   }
 
   // The number of selector pieces we'll have.
+  Optional<ForeignAsyncConvention> asyncConvention
+    = getForeignAsyncConvention();
   Optional<ForeignErrorConvention> errorConvention
     = getForeignErrorConvention();
   unsigned numSelectorPieces
-    = argNames.size() + (errorConvention.hasValue() ? 1 : 0);
+    = argNames.size() + (asyncConvention.hasValue() ? 1 : 0)
+    + (errorConvention.hasValue() ? 1 : 0);
 
   // If we have no arguments, it's a nullary selector.
   if (numSelectorPieces == 0) {
@@ -6932,6 +6987,14 @@ AbstractFunctionDecl::getObjCSelector(DeclName preferredName,
   unsigned argIndex = 0;
   for (unsigned piece = 0; piece != numSelectorPieces; ++piece) {
     if (piece > 0) {
+      // If we have an async convention that inserts a completion handler
+      // parameter here, add "completionHandler".
+      if (asyncConvention &&
+          piece == asyncConvention->completionHandlerParamIndex()) {
+        selectorPieces.push_back(ctx.getIdentifier("completionHandler"));
+        continue;
+      }
+
       // If we have an error convention that inserts an error parameter
       // here, add "error".
       if (errorConvention &&
@@ -6945,12 +7008,21 @@ AbstractFunctionDecl::getObjCSelector(DeclName preferredName,
       continue;
     }
 
-    // For the first selector piece, attach either the first parameter
-    // or "AndReturnError" to the base name, if appropriate.
+    // For the first selector piece, attach either the first parameter,
+    // "withCompletionHandker", or "AndReturnError" to the base name,
+    // if appropriate.
     auto firstPiece = baseName;
     llvm::SmallString<32> scratch;
     scratch += firstPiece.str();
-    if (errorConvention && piece == errorConvention->getErrorParameterIndex()) {
+    if (asyncConvention &&
+        piece == asyncConvention->completionHandlerParamIndex()) {
+      // The completion handler is first; append "WithCompletionHandler".
+      camel_case::appendSentenceCase(scratch, "WithCompletionHandler");
+
+      firstPiece = ctx.getIdentifier(scratch);
+      didStringManipulation = true;
+    } else if (errorConvention &&
+               piece == errorConvention->getErrorParameterIndex()) {
       // The error is first; append "AndReturnError".
       camel_case::appendSentenceCase(scratch, "AndReturnError");
 

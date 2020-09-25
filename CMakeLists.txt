@@ -242,10 +242,6 @@ set(SWIFT_NATIVE_CLANG_TOOLS_PATH "" CACHE STRING
 set(SWIFT_NATIVE_SWIFT_TOOLS_PATH "" CACHE STRING
    "Path to the directory that contains Swift tools that are executable on the build machine")
 
-option(SWIFT_ENABLE_MODULE_INTERFACES
-       "Generate .swiftinterface files alongside .swiftmodule files"
-       TRUE)
-
 option(SWIFT_STDLIB_ENABLE_SIB_TARGETS
        "Should we generate sib targets for the stdlib or not?"
        FALSE)
@@ -627,22 +623,6 @@ swift_common_cxx_warnings()
 # Check if we're build with MSVC or Clang-cl, as these compilers have similar command line arguments.
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC" OR "${CMAKE_CXX_SIMULATE_ID}" STREQUAL "MSVC")
   set(SWIFT_COMPILER_IS_MSVC_LIKE TRUE)
-endif()
-
-if(NOT SWIFT_COMPILER_IS_MSVC_LIKE)
-  # CMake's default for CMAKE_CXX_FLAGS_RELEASE is "-O3 -DNDEBUG". Let's avoid "-O3" for consistency
-  # between Release and RelWithDebInfo. Dropping -DNDEBUG from this setting is blocked by triggering
-  # a test failure of Swift-Unit :: Syntax/./SwiftSyntaxTests/TypeSyntaxTests.MetatypeTypeWithAPIs
-  # because unit tests don't currently explicitly set -DNDEBUG/-UNDEBUG.
-  set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
-
-  _compute_lto_flag("${SWIFT_TOOLS_ENABLE_LTO}" _lto_flag_out)
-  if(_lto_flag_out)
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -gline-tables-only")
-    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -gline-tables-only")
-  endif()
-else()
-  
 endif()
 
 #

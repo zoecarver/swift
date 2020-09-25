@@ -71,6 +71,8 @@ bool ArgsToFrontendOptionsConverter::convert(
 
   Opts.EmitVerboseSIL |= Args.hasArg(OPT_emit_verbose_sil);
   Opts.EmitSortedSIL |= Args.hasArg(OPT_emit_sorted_sil);
+  Opts.PrintFullConvention |=
+      Args.hasArg(OPT_experimental_print_full_convention);
 
   Opts.EnableTesting |= Args.hasArg(OPT_enable_testing);
   Opts.EnablePrivateImports |= Args.hasArg(OPT_enable_private_imports);
@@ -87,6 +89,11 @@ bool ArgsToFrontendOptionsConverter::convert(
   }
 
   Opts.DisableImplicitModules |= Args.hasArg(OPT_disable_implicit_swift_modules);
+
+  Opts.ImportPrescan |= Args.hasArg(OPT_import_prescan);
+
+  Opts.EnableExperimentalCrossModuleIncrementalBuild |=
+      Args.hasArg(OPT_enable_experimental_cross_module_incremental_build);
 
   // Always track system dependencies when scanning dependencies.
   if (const Arg *ModeArg = Args.getLastArg(OPT_modes_Group)) {
@@ -143,6 +150,16 @@ bool ArgsToFrontendOptionsConverter::convert(
     Opts.InputsAndOutputs = std::move(inputsAndOutputs).getValue();
   }
 
+  if (Args.hasArg(OPT_parse_sil) || Opts.InputsAndOutputs.shouldTreatAsSIL()) {
+    Opts.InputMode = FrontendOptions::ParseInputMode::SIL;
+  } else if (Opts.InputsAndOutputs.shouldTreatAsModuleInterface()) {
+    Opts.InputMode = FrontendOptions::ParseInputMode::SwiftModuleInterface;
+  } else if (Args.hasArg(OPT_parse_as_library)) {
+    Opts.InputMode = FrontendOptions::ParseInputMode::SwiftLibrary;
+  } else {
+    Opts.InputMode = FrontendOptions::ParseInputMode::Swift;
+  }
+
   if (Opts.RequestedAction == FrontendOptions::ActionType::NoneAction) {
     Opts.RequestedAction = determineRequestedAction(Args);
   }
@@ -163,7 +180,7 @@ bool ArgsToFrontendOptionsConverter::convert(
     return true;
   }
 
-  if (setUpInputKindAndImmediateArgs())
+  if (setUpImmediateArgs())
     return true;
 
   if (computeModuleName())
@@ -398,7 +415,7 @@ ArgsToFrontendOptionsConverter::determineRequestedAction(const ArgList &args) {
   llvm_unreachable("Unhandled mode option");
 }
 
-bool ArgsToFrontendOptionsConverter::setUpInputKindAndImmediateArgs() {
+bool ArgsToFrontendOptionsConverter::setUpImmediateArgs() {
   using namespace options;
   bool treatAsSIL =
       Args.hasArg(OPT_parse_sil) || Opts.InputsAndOutputs.shouldTreatAsSIL();
@@ -418,17 +435,6 @@ bool ArgsToFrontendOptionsConverter::setUpInputKindAndImmediateArgs() {
       }
     }
   }
-
-  if (treatAsSIL)
-    Opts.InputKind = InputFileKind::SIL;
-  else if (Opts.InputsAndOutputs.shouldTreatAsLLVM())
-    Opts.InputKind = InputFileKind::LLVM;
-  else if (Opts.InputsAndOutputs.shouldTreatAsModuleInterface())
-    Opts.InputKind = InputFileKind::SwiftModuleInterface;
-  else if (Args.hasArg(OPT_parse_as_library))
-    Opts.InputKind = InputFileKind::SwiftLibrary;
-  else
-    Opts.InputKind = InputFileKind::Swift;
 
   return false;
 }

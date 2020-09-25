@@ -59,10 +59,13 @@ namespace swift {
 class DependencyTracker;
 class DiagnosticEngine;
 class FrontendOptions;
+class ModuleDecl;
 class SourceFile;
 
 /// Use a new namespace to help keep the experimental code from clashing.
 namespace fine_grained_dependencies {
+
+class SourceFileDepGraph;
 
 using StringVec = std::vector<std::string>;
 
@@ -343,11 +346,11 @@ private:
 // MARK: Start of fine-grained-dependency-specific code
 //==============================================================================
 
-/// The entry point into this system from the frontend:
-/// Write out the .swiftdeps file for a frontend compilation of a primary file.
-bool emitReferenceDependencies(DiagnosticEngine &diags, SourceFile *SF,
-                               const DependencyTracker &depTracker,
-                               StringRef outputPath, bool alsoEmitDotFile);
+bool withReferenceDependencies(
+    llvm::PointerUnion<ModuleDecl *, SourceFile *> MSF,
+    const DependencyTracker &depTracker, StringRef outputPath,
+    bool alsoEmitDotFile, llvm::function_ref<bool(SourceFileDepGraph &&)>);
+
 //==============================================================================
 // MARK: Enums
 //==============================================================================
@@ -393,14 +396,6 @@ public:
 
   NodeT *getInterface() const { return interface; }
   NodeT *getImplementation() const { return implementation; }
-
-  /// When creating an arc to represent a link from def to use, the use end of
-  /// the arc depends on if the dependency is a cascading one. Centralize that
-  /// choice here.
-  /// ("use" in the name represents the noun, not the verb.)
-  NodeT *useDependingOnCascading(bool ifCascades) {
-    return ifCascades ? interface : implementation;
-  }
 };
 
 //==============================================================================
@@ -500,13 +495,6 @@ public:
   /// Given some type of provided entity compute the name field of the key.
   template <NodeKind kind, typename Entity>
   static std::string computeNameForProvidedEntity(Entity);
-
-  /// Given some type of depended-upon entity create the key.
-  static DependencyKey createDependedUponKey(StringRef mangledHolderName,
-                                             StringRef memberBaseName);
-
-  template <NodeKind kind>
-  static DependencyKey createDependedUponKey(StringRef);
 
   static DependencyKey createKeyForWholeSourceFile(DeclAspect,
                                                    StringRef swiftDeps);

@@ -55,7 +55,7 @@ const uint16_t SWIFTMODULE_VERSION_MAJOR = 0;
 /// describe what change you made. The content of this comment isn't important;
 /// it just ensures a conflict if two people change the module format.
 /// Don't worry about adhering to the 80-column limit for this line.
-const uint16_t SWIFTMODULE_VERSION_MINOR = 576; // hasCReferences
+const uint16_t SWIFTMODULE_VERSION_MINOR = 579; // incremental deps info block
 
 /// A standard hash seed used for all string hashes in a serialized module.
 ///
@@ -208,8 +208,8 @@ enum class ReadWriteImplKind : uint8_t {
   MutableAddress,
   MaterializeToTemporary,
   Modify,
-  StoredWithSimpleDidSet,
-  InheritedWithSimpleDidSet,
+  StoredWithDidSet,
+  InheritedWithDidSet,
 };
 using ReadWriteImplKindField = BCFixed<3>;
 
@@ -729,6 +729,11 @@ enum BlockID {
   ///
   /// \sa decl_locs_block
   DECL_LOCS_BLOCK_ID,
+
+  /// The incremental dependency information block.
+  ///
+  /// This is part of a stable format and should not be renumbered.
+  INCREMENTAL_INFORMATION_BLOCK_ID = 196,
 };
 
 /// The record types within the control block.
@@ -1250,7 +1255,6 @@ namespace decls_block {
     BCFixed<1>,   // explicitly objc?
     BCFixed<1>,   // static?
     VarDeclIntroducerField,   // introducer
-    BCFixed<1>,   // HasNonPatternBindingInit?
     BCFixed<1>,   // is getter mutating?
     BCFixed<1>,   // is setter mutating?
     BCFixed<1>,   // is this the backing storage for a lazy property?

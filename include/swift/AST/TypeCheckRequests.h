@@ -16,6 +16,7 @@
 #ifndef SWIFT_TYPE_CHECK_REQUESTS_H
 #define SWIFT_TYPE_CHECK_REQUESTS_H
 
+#include "swift/AST/ActorIsolation.h"
 #include "swift/AST/AnyFunctionRef.h"
 #include "swift/AST/ASTTypeIDs.h"
 #include "swift/AST/GenericSignature.h"
@@ -95,8 +96,7 @@ public:
 class SuperclassTypeRequest
     : public SimpleRequest<
           SuperclassTypeRequest, Type(NominalTypeDecl *, TypeResolutionStage),
-          RequestFlags::SeparatelyCached | RequestFlags::DependencySink |
-              RequestFlags::DependencySource> {
+          RequestFlags::SeparatelyCached | RequestFlags::DependencySink> {
 public:
   using SimpleRequest::SimpleRequest;
 
@@ -120,8 +120,6 @@ public:
 
 public:
   // Incremental dependencies
-  evaluator::DependencySource
-  readDependencySource(const evaluator::DependencyRecorder &e) const;
   void writeDependencySink(evaluator::DependencyCollector &tracker,
                            Type t) const;
 };
@@ -799,6 +797,61 @@ public:
   bool isCached() const { return true; }
 };
 
+/// Determine whether the given function can be an @asyncHandler, without
+/// producing any diagnostics.
+class CanBeAsyncHandlerRequest :
+    public SimpleRequest<CanBeAsyncHandlerRequest,
+                         bool(FuncDecl *),
+                         RequestFlags::Cached> {
+public:
+  using SimpleRequest::SimpleRequest;
+
+private:
+  friend SimpleRequest;
+
+  bool evaluate(Evaluator &evaluator, FuncDecl *func) const;
+
+public:
+  // Caching
+  bool isCached() const { return true; }
+};
+
+/// Determine whether the given class is an actor.
+class IsActorRequest :
+    public SimpleRequest<IsActorRequest,
+                         bool(ClassDecl *),
+                         RequestFlags::Cached> {
+public:
+  using SimpleRequest::SimpleRequest;
+
+private:
+  friend SimpleRequest;
+
+  bool evaluate(Evaluator &evaluator, ClassDecl *classDecl) const;
+
+public:
+  // Caching
+  bool isCached() const { return true; }
+};
+
+/// Determine the actor isolation for the given declaration.
+class ActorIsolationRequest :
+    public SimpleRequest<ActorIsolationRequest,
+                         ActorIsolation(ValueDecl *),
+                         RequestFlags::Cached> {
+public:
+  using SimpleRequest::SimpleRequest;
+
+private:
+  friend SimpleRequest;
+
+  ActorIsolation evaluate(Evaluator &evaluator, ValueDecl *value) const;
+
+public:
+  // Caching
+  bool isCached() const { return true; }
+};
+
 /// Request whether the storage has a mutating getter.
 class IsGetterMutatingRequest :
     public SimpleRequest<IsGetterMutatingRequest,
@@ -884,14 +937,11 @@ public:
   bool isCached() const { return true; }
 };
 
-/// Request to type check the body of the given function.
-///
-/// Produces true if an error occurred, false otherwise.
-/// FIXME: it would be far better to return the type-checked body.
-class TypeCheckFunctionBodyRequest :
-    public SimpleRequest<TypeCheckFunctionBodyRequest,
-                         bool(AbstractFunctionDecl *),
-                         RequestFlags::Cached|RequestFlags::DependencySource> {
+/// Request to retrieve the type-checked body of the given function.
+class TypeCheckFunctionBodyRequest
+    : public SimpleRequest<
+          TypeCheckFunctionBodyRequest, BraceStmt *(AbstractFunctionDecl *),
+          RequestFlags::SeparatelyCached | RequestFlags::DependencySource> {
 public:
   using SimpleRequest::SimpleRequest;
 
@@ -899,10 +949,13 @@ private:
   friend SimpleRequest;
 
   // Evaluation.
-  bool evaluate(Evaluator &evaluator, AbstractFunctionDecl *func) const;
+  BraceStmt *evaluate(Evaluator &evaluator, AbstractFunctionDecl *func) const;
 
 public:
+  // Separate caching.
   bool isCached() const { return true; }
+  Optional<BraceStmt *> getCachedResult() const;
+  void cacheResult(BraceStmt *body) const;
 
 public:
   // Incremental dependencies.
@@ -2351,8 +2404,7 @@ class LookupAllConformancesInContextRequest
                            ProtocolConformanceLookupResult(
                                const IterableDeclContext *),
                            RequestFlags::Cached |
-                               RequestFlags::DependencySink |
-                               RequestFlags::DependencySource> {
+                               RequestFlags::DependencySink> {
 public:
   using SimpleRequest::SimpleRequest;
 
@@ -2367,8 +2419,6 @@ public:
   bool isCached() const { return true; }
 
   // Incremental dependencies
-  evaluator::DependencySource
-  readDependencySource(const evaluator::DependencyRecorder &eval) const;
   void writeDependencySink(evaluator::DependencyCollector &tracker,
                            ProtocolConformanceLookupResult r) const;
 };
@@ -2501,7 +2551,8 @@ public:
 
 class ResolveTypeRequest
     : public SimpleRequest<ResolveTypeRequest,
-                           Type(const TypeResolution *, TypeRepr *),
+                           Type(const TypeResolution *, TypeRepr *,
+                                GenericParamList *),
                            RequestFlags::Uncached> {
 public:
   using SimpleRequest::SimpleRequest;
@@ -2515,7 +2566,7 @@ private:
 
   // Evaluation.
   Type evaluate(Evaluator &evaluator, const TypeResolution *resolution,
-                TypeRepr *repr) const;
+                TypeRepr *repr, GenericParamList *silParams) const;
 };
 
 void simple_display(llvm::raw_ostream &out, const TypeResolution *resolution);

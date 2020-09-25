@@ -259,11 +259,6 @@ public:
   void visitTransposeAttr(TransposeAttr *attr);
 
   void visitAsyncHandlerAttr(AsyncHandlerAttr *attr) {
-    if (!Ctx.LangOpts.EnableExperimentalConcurrency) {
-      diagnoseAndRemoveAttr(attr, diag::asynchandler_attr_requires_concurrency);
-      return;
-    }
-
     auto func = dyn_cast<FuncDecl>(D);
     if (!func) {
       diagnoseAndRemoveAttr(attr, diag::asynchandler_non_func);
@@ -272,6 +267,61 @@ public:
 
     // Trigger the request to check for @asyncHandler.
     (void)func->isAsyncHandler();
+  }
+
+  void visitActorAttr(ActorAttr *attr) {
+    auto classDecl = dyn_cast<ClassDecl>(D);
+    if (!classDecl)
+      return; // already diagnosed
+
+    (void)classDecl->isActor();
+  }
+
+  void visitActorIndependentAttr(ActorIndependentAttr *attr) {
+    // @actorIndependent can be applied to global and static/class variables
+    // that do not have storage.
+    auto dc = D->getDeclContext();
+    if (auto var = dyn_cast<VarDecl>(D)) {
+      // @actorIndependent is meaningless on a `let`.
+      if (var->isLet()) {
+        diagnoseAndRemoveAttr(attr, diag::actorisolated_let);
+        return;
+      }
+
+      // @actorIndependent can not be applied to stored properties.
+      if (var->hasStorage()) {
+        diagnoseAndRemoveAttr(attr, diag::actorisolated_mutable_storage);
+        return;
+      }
+
+      // @actorIndependent can not be applied to local properties.
+      if (dc->isLocalContext()) {
+        diagnoseAndRemoveAttr(attr, diag::actorisolated_local_var);
+        return;
+      }
+
+      // If this is a static or global variable, we're all set.
+      if (dc->isModuleScopeContext() ||
+          (dc->isTypeContext() && var->isStatic())) {
+        return;
+      }
+
+      // Otherwise, fall through to make sure we're in an appropriate
+      // context.
+    }
+
+    // @actorIndependent only makes sense on an actor instance member.
+    if (!dc->getSelfClassDecl() ||
+        !dc->getSelfClassDecl()->isActor()) {
+      diagnoseAndRemoveAttr(attr, diag::actorisolated_not_actor_member);
+      return;
+    }
+
+    if (!cast<ValueDecl>(D)->isInstanceMember()) {
+      diagnoseAndRemoveAttr(
+          attr, diag::actorisolated_not_actor_instance_member);
+      return;
+    }
   }
 };
 } // end anonymous namespace
@@ -885,7 +935,10 @@ void AttributeChecker::visitSPIAccessControlAttr(SPIAccessControlAttr *attr) {
   if (auto VD = dyn_cast<ValueDecl>(D)) {
     // VD must be public or open to use an @_spi attribute.
     auto declAccess = VD->getFormalAccess();
-    if (declAccess < AccessLevel::Public) {
+    auto DC = VD->getDeclContext()->getAsDecl();
+    if (declAccess < AccessLevel::Public &&
+        !VD->getAttrs().hasAttribute<UsableFromInlineAttr>() &&
+        !(DC && DC->isSPI())) {
       diagnoseAndRemoveAttr(attr,
                             diag::spi_attribute_on_non_public,
                             declAccess,
@@ -895,7 +948,9 @@ void AttributeChecker::visitSPIAccessControlAttr(SPIAccessControlAttr *attr) {
     // Forbid stored properties marked SPI in frozen types.
     if (auto property = dyn_cast<AbstractStorageDecl>(VD))
       if (auto DC = dyn_cast<NominalTypeDecl>(D->getDeclContext()))
-        if (property->hasStorage() && !DC->isFormallyResilient())
+        if (property->hasStorage() &&
+            !DC->isFormallyResilient() &&
+            !DC->isSPI())
           diagnoseAndRemoveAttr(attr,
                                 diag::spi_attribute_on_frozen_stored_properties,
                                 VD->getName());
@@ -3008,8 +3063,54 @@ void AttributeChecker::visitPropertyWrapperAttr(PropertyWrapperAttr *attr) {
 }
 
 void AttributeChecker::visitFunctionBuilderAttr(FunctionBuilderAttr *attr) {
-  // TODO: check that the type at least provides a `sequence` factory?
-  // Any other validation?
+  auto *nominal = dyn_cast<NominalTypeDecl>(D);
+  SmallVector<ValueDecl *, 4> potentialMatches;
+  bool supportsBuildBlock = TypeChecker::typeSupportsBuilderOp(
+      nominal->getDeclaredType(), nominal, D->getASTContext().Id_buildBlock,
+      /*argLabels=*/{}, &potentialMatches);
+
+  if (!supportsBuildBlock) {
+    {
+      auto diag = diagnose(
+          nominal->getLoc(), diag::function_builder_static_buildblock);
+
+      // If there were no close matches, propose adding a stub.
+      SourceLoc buildInsertionLoc;
+      std::string stubIndent;
+      Type componentType;
+      std::tie(buildInsertionLoc, stubIndent, componentType) =
+          determineFunctionBuilderBuildFixItInfo(nominal);
+      if (buildInsertionLoc.isValid() && potentialMatches.empty()) {
+        std::string fixItString;
+        {
+          llvm::raw_string_ostream out(fixItString);
+          printFunctionBuilderBuildFunction(
+              nominal, componentType,
+              FunctionBuilderBuildFunction::BuildBlock,
+              stubIndent, out);
+        }
+
+        diag.fixItInsert(buildInsertionLoc, fixItString);
+      }
+    }
+
+    // For any close matches, attempt to explain to the user why they aren't
+    // valid.
+    for (auto *member : potentialMatches) {
+      if (member->isStatic() && isa<FuncDecl>(member))
+        continue;
+
+      if (isa<FuncDecl>(member) &&
+          member->getDeclContext()->getSelfNominalTypeDecl() == nominal)
+        diagnose(member->getLoc(), diag::function_builder_non_static_buildblock)
+          .fixItInsert(member->getAttributeInsertionLoc(true), "static ");
+      else if (isa<EnumElementDecl>(member))
+        diagnose(member->getLoc(), diag::function_builder_buildblock_enum_case);
+      else
+        diagnose(member->getLoc(),
+                 diag::function_builder_buildblock_not_static_method);
+    }
+  }
 }
 
 void
