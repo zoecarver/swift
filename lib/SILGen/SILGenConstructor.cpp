@@ -18,6 +18,7 @@
 #include "SILGenFunctionBuilder.h"
 #include "Scope.h"
 #include "swift/AST/ASTMangler.h"
+#include "swift/AST/ForeignErrorConvention.h"
 #include "swift/AST/GenericEnvironment.h"
 #include "swift/AST/ParameterList.h"
 #include "swift/AST/PropertyWrappers.h"
@@ -211,8 +212,24 @@ static void emitImplicitValueConstructor(SILGenFunction &SGF,
                "number of args does not match number of fields");
         (void)eltEnd;
         FullExpr scope(SGF.Cleanups, field->getParentPatternBinding());
+
+        RValue arg = std::move(*elti);
+
+        // If the stored property has an attached function builder and its
+        // type is not a function type, the argument is a noescape closure
+        // that needs to be called.
+        if (field->getFunctionBuilderType()) {
+          if (!field->getValueInterfaceType()
+                  ->lookThroughAllOptionalTypes()->is<AnyFunctionType>()) {
+            auto resultTy = cast<FunctionType>(arg.getType()).getResult();
+            arg = SGF.emitMonomorphicApply(
+                Loc, std::move(arg).getAsSingleValue(SGF, Loc), { }, resultTy,
+                resultTy, ApplyOptions::None, None, None);
+          }
+        }
+
         maybeEmitPropertyWrapperInitFromValue(SGF, Loc, field, subs,
-                                              std::move(*elti))
+                                              std::move(arg))
           .forwardInto(SGF, Loc, init.get());
         ++elti;
       } else {
@@ -303,8 +320,8 @@ void SILGenFunction::emitValueConstructor(ConstructorDecl *ctor) {
     return emitImplicitValueConstructor(*this, ctor);
 
   // True if this constructor delegates to a peer constructor with self.init().
-  bool isDelegating = ctor->getDelegatingOrChainedInitKind(nullptr) ==
-    ConstructorDecl::BodyInitKind::Delegating;
+  bool isDelegating = ctor->getDelegatingOrChainedInitKind().initKind ==
+      BodyInitKind::Delegating;
 
   // Get the 'self' decl and type.
   VarDecl *selfDecl = ctor->getImplicitSelfDecl();
@@ -393,9 +410,9 @@ void SILGenFunction::emitValueConstructor(ConstructorDecl *ctor) {
     emitMemberInitializers(ctor, selfDecl, nominal);
   }
 
-  emitProfilerIncrement(ctor->getBody());
+  emitProfilerIncrement(ctor->getTypecheckedBody());
   // Emit the constructor body.
-  emitStmt(ctor->getBody());
+  emitStmt(ctor->getTypecheckedBody());
 
   
   // Build a custom epilog block, since the AST representation of the
@@ -622,7 +639,7 @@ void SILGenFunction::emitClassConstructorAllocator(ConstructorDecl *ctor) {
   SILValue initedSelfValue = emitApplyWithRethrow(Loc, initVal.forward(*this),
                                                   initTy, subMap, args);
 
-  emitProfilerIncrement(ctor->getBody());
+  emitProfilerIncrement(ctor->getTypecheckedBody());
 
   // Return the initialized 'self'.
   B.createReturn(ImplicitReturnLocation::getImplicitReturnLoc(Loc),
@@ -632,13 +649,13 @@ void SILGenFunction::emitClassConstructorAllocator(ConstructorDecl *ctor) {
 void SILGenFunction::emitClassConstructorInitializer(ConstructorDecl *ctor) {
   MagicFunctionName = SILGenModule::getMagicFunctionName(ctor);
 
-  assert(ctor->getBody() && "Class constructor without a body?");
+  assert(ctor->getTypecheckedBody() && "Class constructor without a body?");
 
   // True if this constructor delegates to a peer constructor with self.init().
   bool isDelegating = false;
   if (!ctor->hasStubImplementation()) {
-    isDelegating = ctor->getDelegatingOrChainedInitKind(nullptr) ==
-      ConstructorDecl::BodyInitKind::Delegating;
+    isDelegating = ctor->getDelegatingOrChainedInitKind().initKind ==
+        BodyInitKind::Delegating;
   }
 
   // Set up the 'self' argument.  If this class has a superclass, we set up
@@ -775,9 +792,9 @@ void SILGenFunction::emitClassConstructorInitializer(ConstructorDecl *ctor) {
     emitMemberInitializers(ctor, selfDecl, selfClassDecl);
   }
 
-  emitProfilerIncrement(ctor->getBody());
+  emitProfilerIncrement(ctor->getTypecheckedBody());
   // Emit the constructor body.
-  emitStmt(ctor->getBody());
+  emitStmt(ctor->getTypecheckedBody());
 
   // Emit the call to super.init() right before exiting from the initializer.
   if (NeedsBoxForSelf) {

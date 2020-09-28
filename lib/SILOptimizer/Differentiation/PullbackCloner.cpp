@@ -1350,7 +1350,7 @@ public:
         if (!getTangentSpace(
                 tupleTy->getElement(i).getType()->getCanonicalType()))
           continue;
-        if (tei->getFieldNo() == i)
+        if (tei->getFieldIndex() == i)
           elements.push_back(av);
         else
           elements.push_back(makeZeroAdjointValue(
@@ -2432,7 +2432,8 @@ void PullbackCloner::Implementation::visitSILBasicBlock(SILBasicBlock *bb) {
         if (isSwitchEnumInstOnOptional(termInst)) {
           accumulateAdjointForOptional(bb, incomingValue, concreteBBArgAdjCopy);
         } else {
-          blockTemporaries[getPullbackBlock(predBB)].insert(concreteBBArgAdjCopy);
+          blockTemporaries[getPullbackBlock(predBB)].insert(
+              concreteBBArgAdjCopy);
           setAdjointValue(predBB, incomingValue,
                           makeConcreteAdjointValue(concreteBBArgAdjCopy));
         }
@@ -2717,7 +2718,7 @@ SILValue PullbackCloner::Implementation::getAdjointProjection(
       return adjSource;
     auto origTupleTy = source->getType().castTo<TupleType>();
     unsigned adjIndex = 0;
-    for (unsigned i : range(teai->getFieldNo())) {
+    for (unsigned i : range(teai->getFieldIndex())) {
       if (getTangentSpace(
               origTupleTy->getElement(i).getType()->getCanonicalType()))
         ++adjIndex;

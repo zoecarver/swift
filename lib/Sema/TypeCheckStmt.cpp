@@ -1600,14 +1600,6 @@ static Type getFunctionBuilderType(FuncDecl *FD) {
   return builderType;
 }
 
-bool TypeChecker::typeCheckAbstractFunctionBody(AbstractFunctionDecl *AFD) {
-  auto res = evaluateOrDefault(AFD->getASTContext().evaluator,
-                               TypeCheckFunctionBodyRequest{AFD}, true);
-  TypeChecker::checkFunctionEffects(AFD);
-  TypeChecker::computeCaptures(AFD);
-  return res;
-}
-
 static Expr* constructCallToSuperInit(ConstructorDecl *ctor,
                                       ClassDecl *ClDecl) {
   ASTContext &Context = ctor->getASTContext();
@@ -1665,7 +1657,7 @@ static bool checkSuperInit(ConstructorDecl *fromCtor,
     superclassDecl->synthesizeSemanticMembersIfNeeded(
         DeclBaseName::createConstructor());
 
-    NLOptions subOptions = NL_QualifiedDefault | NL_KnownNonCascadingDependency;
+    NLOptions subOptions = NL_QualifiedDefault;
 
     SmallVector<ValueDecl *, 4> lookupResults;
     fromCtor->lookupQualified(superclassDecl,
@@ -1677,7 +1669,7 @@ static bool checkSuperInit(ConstructorDecl *fromCtor,
       if (!superclassCtor || !superclassCtor->isDesignatedInit() ||
           superclassCtor == ctor)
         continue;
-      
+
       // Found another designated initializer in the superclass. Don't add the
       // super.init() call.
       return true;
@@ -1691,6 +1683,7 @@ static bool checkSuperInit(ConstructorDecl *fromCtor,
           fragileKind);
     }
   }
+
 
   return false;
 }
@@ -1711,30 +1704,30 @@ static void checkClassConstructorBody(ClassDecl *classDecl,
   ASTContext &ctx = classDecl->getASTContext();
   bool wantSuperInitCall = false;
   bool isDelegating = false;
-  ApplyExpr *initExpr = nullptr;
-  switch (ctor->getDelegatingOrChainedInitKind(&ctx.Diags, &initExpr)) {
-  case ConstructorDecl::BodyInitKind::Delegating:
+  auto initKindAndExpr = ctor->getDelegatingOrChainedInitKind();
+  switch (initKindAndExpr.initKind) {
+  case BodyInitKind::Delegating:
     isDelegating = true;
     wantSuperInitCall = false;
     break;
 
-  case ConstructorDecl::BodyInitKind::Chained:
-    checkSuperInit(ctor, initExpr, false);
+  case BodyInitKind::Chained:
+    checkSuperInit(ctor, initKindAndExpr.initExpr, false);
 
     /// A convenience initializer cannot chain to a superclass constructor.
     if (ctor->isConvenienceInit()) {
-      ctx.Diags.diagnose(initExpr->getLoc(),
+      ctx.Diags.diagnose(initKindAndExpr.initExpr->getLoc(),
                          diag::delegating_convenience_super_init,
                          ctor->getDeclContext()->getDeclaredInterfaceType());
     }
 
     LLVM_FALLTHROUGH;
 
-  case ConstructorDecl::BodyInitKind::None:
+  case BodyInitKind::None:
     wantSuperInitCall = false;
     break;
 
-  case ConstructorDecl::BodyInitKind::ImplicitChained:
+  case BodyInitKind::ImplicitChained:
     wantSuperInitCall = true;
     break;
   }
@@ -1750,7 +1743,7 @@ static void checkClassConstructorBody(ClassDecl *classDecl,
           .fixItInsert(ctor->getLoc(), "convenience ");
     }
 
-    ctx.Diags.diagnose(initExpr->getLoc(), diag::delegation_here);
+    ctx.Diags.diagnose(initKindAndExpr.initExpr->getLoc(), diag::delegation_here);
   }
 
   // An inlinable constructor in a class must always be delegating,
@@ -1910,6 +1903,11 @@ bool TypeCheckASTNodeAtLocRequest::evaluate(Evaluator &evaluator,
       // Wire up the function body now.
       func->setBody(*optBody, AbstractFunctionDecl::BodyKind::TypeChecked);
       return false;
+    } else if (func->hasSingleExpressionBody() &&
+                func->getResultInterfaceType()->isVoid()) {
+       // The function returns void.  We don't need an explicit return, no matter
+       // what the type of the expression is.  Take the inserted return back out.
+      func->getBody()->setFirstElement(func->getSingleExpressionBody());
     }
   }
 
@@ -1928,7 +1926,7 @@ bool TypeCheckASTNodeAtLocRequest::evaluate(Evaluator &evaluator,
   return false;
 }
 
-bool
+BraceStmt *
 TypeCheckFunctionBodyRequest::evaluate(Evaluator &evaluator,
                                        AbstractFunctionDecl *AFD) const {
   ASTContext &ctx = AFD->getASTContext();
@@ -1939,8 +1937,22 @@ TypeCheckFunctionBodyRequest::evaluate(Evaluator &evaluator,
     timer.emplace(AFD);
 
   BraceStmt *body = AFD->getBody();
-  if (!body || AFD->isBodyTypeChecked())
-    return false;
+  assert(body && "Expected body to type-check");
+
+  // It's possible we sythesized an already type-checked body, in which case
+  // we're done.
+  if (AFD->isBodyTypeChecked())
+    return body;
+
+  auto errorBody = [&]() {
+    // If we had an error, return an ErrorExpr body instead of returning the
+    // un-type-checked body.
+    // FIXME: This should be handled by typeCheckExpression.
+    auto range = AFD->getBodySourceRange();
+    return BraceStmt::create(ctx, range.Start,
+                             {new (ctx) ErrorExpr(range, ErrorType::get(ctx))},
+                             range.End);
+  };
 
   bool alreadyTypeChecked = false;
   if (auto *func = dyn_cast<FuncDecl>(AFD)) {
@@ -1949,7 +1961,7 @@ TypeCheckFunctionBodyRequest::evaluate(Evaluator &evaluator,
               TypeChecker::applyFunctionBuilderBodyTransform(
                 func, builderType)) {
         if (!*optBody)
-          return true;
+          return errorBody();
 
         body = *optBody;
         alreadyTypeChecked = true;
@@ -2012,14 +2024,18 @@ TypeCheckFunctionBodyRequest::evaluate(Evaluator &evaluator,
     }
   }
 
-  // Wire up the function body now.
+  // Temporarily wire up the function body for some extra checks.
+  // FIXME: Eliminate this.
   AFD->setBody(body, AbstractFunctionDecl::BodyKind::TypeChecked);
 
   // If nothing went wrong yet, perform extra checking.
   if (!hadError)
     performAbstractFuncDeclDiagnostics(AFD);
 
-  return hadError;
+  TypeChecker::checkFunctionEffects(AFD);
+  TypeChecker::computeCaptures(AFD);
+
+  return hadError ? errorBody() : body;
 }
 
 bool TypeChecker::typeCheckClosureBody(ClosureExpr *closure) {

@@ -52,14 +52,6 @@ using namespace swift::silverifier;
 
 using Lowering::AbstractionPattern;
 
-// This flag is used only to check that sil-combine can properly
-// remove any code after unreachable, thus bringing SIL into
-// its canonical form which may get temporarily broken during
-// intermediate transformations.
-static llvm::cl::opt<bool> SkipUnreachableMustBeLastErrors(
-                              "verify-skip-unreachable-must-be-last",
-                              llvm::cl::init(false));
-
 // This flag controls the default behaviour when hitting a verification
 // failure (abort/exit).
 static llvm::cl::opt<bool> AbortOnFailure(
@@ -1026,10 +1018,8 @@ public:
                 "Non-terminators cannot be the last in a block");
       }
     } else {
-      // Skip the check for UnreachableInst, if explicitly asked to do so.
-      if (!isa<UnreachableInst>(I) || !SkipUnreachableMustBeLastErrors)
-        require(&*BB->rbegin() == I,
-                "Terminator must be the last in block");
+      require(&*BB->rbegin() == I,
+              "Terminator must be the last in block");
     }
 
     // Verify that all of our uses are in this function.
@@ -2757,11 +2747,11 @@ public:
     require(EI->getType().isObject(),
             "result of tuple_extract must be object");
 
-    require(EI->getFieldNo() < operandTy->getNumElements(),
+    require(EI->getFieldIndex() < operandTy->getNumElements(),
             "invalid field index for tuple_extract instruction");
     if (EI->getModule().getStage() != SILStage::Lowered) {
       requireSameType(EI->getType().getASTType(),
-                      operandTy.getElementType(EI->getFieldNo()),
+                      operandTy.getElementType(EI->getFieldIndex()),
                       "type of tuple_extract does not match type of element");
     }
   }
@@ -2803,12 +2793,12 @@ public:
             "must derive tuple_element_addr from tuple");
 
     ArrayRef<TupleTypeElt> fields = operandTy.castTo<TupleType>()->getElements();
-    require(EI->getFieldNo() < fields.size(),
+    require(EI->getFieldIndex() < fields.size(),
             "invalid field index for element_addr instruction");
     if (EI->getModule().getStage() != SILStage::Lowered) {
       requireSameType(
           EI->getType().getASTType(),
-          CanType(fields[EI->getFieldNo()].getType()),
+          CanType(fields[EI->getFieldIndex()].getType()),
           "type of tuple_element_addr does not match type of element");
     }
   }
@@ -2866,7 +2856,7 @@ public:
           loweredFieldTy, EI->getType(),
           "result of ref_element_addr does not match type of field");
     }
-    EI->getFieldNo();  // Make sure we can access the field without crashing.
+    EI->getFieldIndex();  // Make sure we can access the field without crashing.
   }
 
   void checkRefTailAddrInst(RefTailAddrInst *RTAI) {
@@ -5568,6 +5558,8 @@ void SILGlobalVariable::verify() const {
 void SILModule::verify() const {
   if (!verificationEnabled(*this))
     return;
+
+  checkForLeaks();
 
   // Uniquing set to catch symbol name collisions.
   llvm::DenseSet<StringRef> symbolNames;

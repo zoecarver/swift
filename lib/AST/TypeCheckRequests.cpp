@@ -157,15 +157,6 @@ void SuperclassTypeRequest::cacheResult(Type value) const {
     protocolDecl->LazySemanticInfo.SuperclassType.setPointerAndInt(value, true);
 }
 
-evaluator::DependencySource SuperclassTypeRequest::readDependencySource(
-    const evaluator::DependencyRecorder &e) const {
-  const auto access = std::get<0>(getStorage())->getFormalAccess();
-  return {
-    e.getActiveDependencySourceOrNull(),
-    evaluator::getScopeForAccessLevel(access)
-  };
-}
-
 void SuperclassTypeRequest::writeDependencySink(
     evaluator::DependencyCollector &tracker, Type value) const {
   if (!value)
@@ -1285,12 +1276,8 @@ void CheckRedeclarationRequest::cacheResult(evaluator::SideEffect) const {
 
 evaluator::DependencySource CheckRedeclarationRequest::readDependencySource(
     const evaluator::DependencyRecorder &eval) const {
-  auto *current = std::get<0>(getStorage());
-  auto *currentDC = current->getDeclContext();
-  return {
-    currentDC->getParentSourceFile(),
-    evaluator::getScopeForAccessLevel(current->getFormalAccess())
-  };
+  auto *currentDC = std::get<0>(getStorage())->getDeclContext();
+  return currentDC->getParentSourceFile();
 }
 
 void CheckRedeclarationRequest::writeDependencySink(
@@ -1316,21 +1303,6 @@ void CheckRedeclarationRequest::writeDependencySink(
 //----------------------------------------------------------------------------//
 // LookupAllConformancesInContextRequest computation.
 //----------------------------------------------------------------------------//
-
-evaluator::DependencySource
-LookupAllConformancesInContextRequest::readDependencySource(
-    const evaluator::DependencyRecorder &collector) const {
-  const auto *nominal = std::get<0>(getStorage())
-                            ->getAsGenericContext()
-                            ->getSelfNominalTypeDecl();
-  if (!nominal) {
-    return {collector.getActiveDependencySourceOrNull(),
-            evaluator::DependencyScope::Cascading};
-  }
-
-  return {collector.getActiveDependencySourceOrNull(),
-          evaluator::getScopeForAccessLevel(nominal->getFormalAccess())};
-}
 
 void LookupAllConformancesInContextRequest::writeDependencySink(
     evaluator::DependencyCollector &tracker,
@@ -1369,7 +1341,7 @@ void ResolveTypeEraserTypeRequest::cacheResult(Type value) const {
 
 evaluator::DependencySource TypeCheckSourceFileRequest::readDependencySource(
     const evaluator::DependencyRecorder &e) const {
-  return {std::get<0>(getStorage()), evaluator::DependencyScope::Cascading};
+  return std::get<0>(getStorage());
 }
 
 Optional<evaluator::SideEffect>
@@ -1399,15 +1371,37 @@ void TypeCheckSourceFileRequest::cacheResult(evaluator::SideEffect) const {
 // TypeCheckFunctionBodyRequest computation.
 //----------------------------------------------------------------------------//
 
+Optional<BraceStmt *> TypeCheckFunctionBodyRequest::getCachedResult() const {
+  using BodyKind = AbstractFunctionDecl::BodyKind;
+  auto *afd = std::get<0>(getStorage());
+  switch (afd->getBodyKind()) {
+  case BodyKind::Deserialized:
+  case BodyKind::MemberwiseInitializer:
+  case BodyKind::None:
+  case BodyKind::Skipped:
+    // These cases don't have any body available.
+    return nullptr;
+
+  case BodyKind::TypeChecked:
+    return afd->Body;
+
+  case BodyKind::Synthesize:
+  case BodyKind::Parsed:
+  case BodyKind::Unparsed:
+    return None;
+  }
+  llvm_unreachable("Unhandled BodyKind in switch");
+}
+
+void TypeCheckFunctionBodyRequest::cacheResult(BraceStmt *body) const {
+  auto *afd = std::get<0>(getStorage());
+  afd->setBody(body, AbstractFunctionDecl::BodyKind::TypeChecked);
+}
+
 evaluator::DependencySource
 TypeCheckFunctionBodyRequest::readDependencySource(
     const evaluator::DependencyRecorder &e) const {
-  // We're going under a function body scope, unconditionally flip the scope
-  // to private.
-  return {
-    std::get<0>(getStorage())->getParentSourceFile(),
-    evaluator::DependencyScope::Private
-  };
+  return std::get<0>(getStorage())->getParentSourceFile();
 }
 
 //----------------------------------------------------------------------------//
@@ -1468,4 +1462,44 @@ Optional<Type> CustomAttrTypeRequest::getCachedResult() const {
 void CustomAttrTypeRequest::cacheResult(Type value) const {
   auto *attr = std::get<0>(getStorage());
   attr->setType(value);
+}
+
+
+void swift::simple_display(
+    llvm::raw_ostream &out, const ActorIsolation &state) {
+  switch (state) {
+    case ActorIsolation::ActorInstance:
+      out << "actor-isolated to instance of " << state.getActor()->getName();
+      break;
+
+    case ActorIsolation::ActorPrivileged:
+      out << "actor-privileged to instance of " << state.getActor()->getName();
+      break;
+
+    case ActorIsolation::Independent:
+      out << "actor-independent";
+      break;
+
+    case ActorIsolation::Unspecified:
+      out << "unspecified actor isolation";
+      break;
+  }
+}
+
+void swift::simple_display(
+    llvm::raw_ostream &out, BodyInitKind initKind) {
+  switch (initKind) {
+  case BodyInitKind::None: out << "none"; return;
+  case BodyInitKind::Delegating: out << "delegating"; return;
+  case BodyInitKind::Chained: out << "chained"; return;
+  case BodyInitKind::ImplicitChained: out << "implicit_chained"; return;
+  }
+  llvm_unreachable("Bad body init kind");
+}
+
+void swift::simple_display(
+    llvm::raw_ostream &out, BodyInitKindAndExpr initKindAndExpr) {
+  simple_display(out, initKindAndExpr.initKind);
+  out << " ";
+  simple_display(out, initKindAndExpr.initExpr);
 }

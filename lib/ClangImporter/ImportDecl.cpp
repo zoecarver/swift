@@ -40,6 +40,7 @@
 #include "swift/Basic/Defer.h"
 #include "swift/Basic/PrettyStackTrace.h"
 #include "swift/Basic/Statistic.h"
+#include "swift/Basic/StringExtras.h"
 #include "swift/ClangImporter/ClangModule.h"
 #include "swift/Config.h"
 #include "swift/Parse/Lexer.h"
@@ -138,7 +139,6 @@ createVarWithPattern(ASTContext &ctx, DeclContext *dc, Identifier name, Type ty,
   // Create a variable to store the underlying value.
   auto var = new (ctx) VarDecl(
       /*IsStatic*/false, introducer,
-      /*IsCaptureList*/false,
       SourceLoc(), name, dc);
   if (isImplicit)
     var->setImplicit();
@@ -1621,7 +1621,7 @@ static void makeStructRawValuedWithBridge(
 
   // Create a computed value variable.
   auto computedVar = new (ctx) VarDecl(
-      /*IsStatic*/false, VarDecl::Introducer::Var, /*IsCaptureList*/false,
+      /*IsStatic*/false, VarDecl::Introducer::Var,
       SourceLoc(), computedVarName, structDecl);
   computedVar->setInterfaceType(bridgedType);
   computedVar->setImplicit();
@@ -1902,7 +1902,7 @@ static bool addErrorDomain(NominalTypeDecl *swiftDecl,
 
   // Make the property decl
   auto errorDomainPropertyDecl = new (C) VarDecl(
-      /*IsStatic*/isStatic, VarDecl::Introducer::Var, /*IsCaptureList*/false,
+      /*IsStatic*/isStatic, VarDecl::Introducer::Var,
       SourceLoc(), C.Id_errorDomain, swiftDecl);
   errorDomainPropertyDecl->setInterfaceType(stringTy);
   errorDomainPropertyDecl->setAccess(AccessLevel::Public);
@@ -2901,7 +2901,6 @@ namespace {
           auto nsErrorType = nsErrorDecl->getDeclaredInterfaceType();
           auto nsErrorProp = new (C) VarDecl(/*IsStatic*/false,
                                              VarDecl::Introducer::Let,
-                                             /*IsCaptureList*/false,
                                              loc, C.Id_nsError,
                                              errorWrapper);
           nsErrorProp->setImplicit();
@@ -2977,7 +2976,6 @@ namespace {
         auto varName = C.Id_rawValue;
         auto rawValue = new (C) VarDecl(/*IsStatic*/false,
                                         VarDecl::Introducer::Var,
-                                        /*IsCaptureList*/false,
                                         SourceLoc(), varName,
                                         enumDecl);
         rawValue->setImplicit();
@@ -3664,7 +3662,6 @@ namespace {
                        AccessLevel::Public,
                        /*IsStatic*/false,
                        VarDecl::Introducer::Var,
-                       /*IsCaptureList*/false,
                        Impl.importSourceLoc(decl->getBeginLoc()),
                        name, dc);
       result->setInterfaceType(type);
@@ -3974,7 +3971,6 @@ namespace {
         Impl.createDeclWithClangNode<VarDecl>(decl, AccessLevel::Public,
                               /*IsStatic*/ false,
                               VarDecl::Introducer::Var,
-                              /*IsCaptureList*/false,
                               Impl.importSourceLoc(decl->getLocation()),
                               name, dc);
       if (decl->getType().isConstQualified()) {
@@ -4062,7 +4058,6 @@ namespace {
       auto result = Impl.createDeclWithClangNode<VarDecl>(decl,
                        AccessLevel::Public,
                        /*IsStatic*/isStatic, introducer,
-                       /*IsCaptureList*/false,
                        Impl.importSourceLoc(decl->getLocation()),
                        name, dc);
       result->setIsObjC(false);
@@ -4411,6 +4406,7 @@ namespace {
         kind = SpecialMethodKind::NSDictionarySubscriptGetter;
 
       // Import the type that this method will have.
+      Optional<ForeignAsyncConvention> asyncConvention;
       Optional<ForeignErrorConvention> errorConvention;
 
       // If we have a property accessor, find the corresponding property
@@ -4449,7 +4445,7 @@ namespace {
         importedType = Impl.importMethodParamsAndReturnType(
             dc, decl, decl->parameters(), decl->isVariadic(),
             isInSystemModule(dc), &bodyParams, importedName,
-            errorConvention, kind);
+            asyncConvention, errorConvention, kind);
       }
       if (!importedType)
         return nullptr;
@@ -4471,10 +4467,10 @@ namespace {
       // Determine whether the function is throwing and/or async.
       bool throws = importedName.getErrorInfo().hasValue();
       bool async = false;
-      auto asyncConvention = importedName.getAsyncInfo();
-      if (asyncConvention) {
+      auto asyncInfo = importedName.getAsyncInfo();
+      if (asyncInfo) {
         async = true;
-        if (asyncConvention->isThrowing())
+        if (asyncInfo->isThrowing())
           throws = true;
       }
 
@@ -5264,8 +5260,7 @@ namespace {
       auto result = Impl.createDeclWithClangNode<VarDecl>(decl,
           getOverridableAccessLevel(dc),
           /*IsStatic*/decl->isClassProperty(), VarDecl::Introducer::Var,
-          /*IsCaptureList*/false, Impl.importSourceLoc(decl->getLocation()),
-          name, dc);
+          Impl.importSourceLoc(decl->getLocation()), name, dc);
       result->setInterfaceType(type);
       Impl.recordImplicitUnwrapForDecl(result,
                                        importedType.isImplicitlyUnwrapped());
@@ -6189,7 +6184,7 @@ SwiftDeclConverter::getImplicitProperty(ImportedName importedName,
 
   auto property = Impl.createDeclWithClangNode<VarDecl>(
       getter, AccessLevel::Public, /*IsStatic*/isStatic,
-      VarDecl::Introducer::Var, /*IsCaptureList*/false, SourceLoc(),
+      VarDecl::Introducer::Var, SourceLoc(),
       propertyName, dc);
   property->setInterfaceType(swiftPropertyType);
   property->setIsObjC(false);
@@ -6412,11 +6407,14 @@ ConstructorDecl *SwiftDeclConverter::importConstructor(
   assert(ownerNominal && "Method in non-type context?");
 
   // Import the type that this method will have.
+  Optional<ForeignAsyncConvention> asyncConvention;
   Optional<ForeignErrorConvention> errorConvention;
   ParameterList *bodyParams;
   auto importedType = Impl.importMethodParamsAndReturnType(
       dc, objcMethod, args, variadic, isInSystemModule(dc), &bodyParams,
-      importedName, errorConvention, SpecialMethodKind::Constructor);
+      importedName, asyncConvention, errorConvention,
+      SpecialMethodKind::Constructor);
+  assert(!asyncConvention && "Initializers don't have async conventions");
   if (!importedType)
     return nullptr;
 
@@ -6608,7 +6606,7 @@ void SwiftDeclConverter::recordObjCOverride(AbstractFunctionDecl *decl) {
   // Dig out the Objective-C superclass.
   SmallVector<ValueDecl *, 4> results;
   superDecl->lookupQualified(superDecl, DeclNameRef(decl->getName()),
-                             NL_QualifiedDefault | NL_KnownNoDependency,
+                             NL_QualifiedDefault,
                              results);
   for (auto member : results) {
     if (member->getKind() != decl->getKind() ||
@@ -6681,7 +6679,7 @@ void SwiftDeclConverter::recordObjCOverride(SubscriptDecl *subscript) {
   SmallVector<ValueDecl *, 2> lookup;
   subscript->getModuleContext()->lookupQualified(
       superDecl, DeclNameRef(subscript->getName()),
-      NL_QualifiedDefault | NL_KnownNoDependency, lookup);
+      NL_QualifiedDefault, lookup);
 
   for (auto result : lookup) {
     auto parentSub = dyn_cast<SubscriptDecl>(result);
@@ -7609,6 +7607,46 @@ bool importer::isSpecialUIKitStructZeroProperty(const clang::NamedDecl *decl) {
   return ident->isStr("UIEdgeInsetsZero") || ident->isStr("UIOffsetZero");
 }
 
+/// Determine whether any of the parameters to the given function is of an
+/// unsafe pointer type.
+static bool hasAnyUnsafePointerParameters(FuncDecl *func) {
+  for (auto param : *func->getParameters()) {
+    Type paramType =
+        param->toFunctionParam().getPlainType()->lookThroughAllOptionalTypes();
+    if (paramType->getAnyPointerElementType()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/// Determine whether the given Objective-C method is likely to be an
+/// asynchronous handler based on its name.
+static bool isObjCMethodLikelyAsyncHandler(
+    const clang::ObjCMethodDecl *method) {
+  auto selector = method->getSelector();
+
+  for (unsigned argIdx : range(std::max(selector.getNumArgs(), 1u))) {
+    auto selectorPiece = selector.getNameForSlot(argIdx);
+    // For the first selector piece, look for the word "did" anywhere.
+    if (argIdx == 0) {
+      for (auto word : camel_case::getWords(selectorPiece)) {
+        if (word == "did" || word == "Did")
+          return true;
+      }
+
+      continue;
+    }
+
+    // Otherwise, check whether any subsequent selector piece starts with "did".
+    if (camel_case::getFirstWord(selectorPiece) == "did")
+      return true;
+  }
+
+  return false;
+}
+
 /// Import Clang attributes as Swift attributes.
 void ClangImporter::Implementation::importAttributes(
     const clang::NamedDecl *ClangDecl,
@@ -7846,6 +7884,24 @@ void ClangImporter::Implementation::importAttributes(
   // Map __attribute__((pure)).
   if (ClangDecl->hasAttr<clang::PureAttr>()) {
     MappedDecl->getAttrs().add(new (C) EffectsAttr(EffectsKind::ReadOnly));
+  }
+
+  // Infer @asyncHandler on imported protocol methods that meet the semantic
+  // requirements.
+  if (SwiftContext.LangOpts.EnableExperimentalConcurrency) {
+    if (auto func = dyn_cast<FuncDecl>(MappedDecl)) {
+      if (auto proto = dyn_cast<ProtocolDecl>(func->getDeclContext())) {
+        if (proto->isObjC() && isa<clang::ObjCMethodDecl>(ClangDecl) &&
+            func->isInstanceMember() && !isa<AccessorDecl>(func) &&
+            isObjCMethodLikelyAsyncHandler(
+                cast<clang::ObjCMethodDecl>(ClangDecl)) &&
+            func->canBeAsyncHandler() &&
+            !hasAnyUnsafePointerParameters(func)) {
+          MappedDecl->getAttrs().add(
+              new (C) AsyncHandlerAttr(/*IsImplicit=*/false));
+        }
+      }
+    }
   }
 }
 
@@ -8602,12 +8658,11 @@ ClangImporter::Implementation::createConstant(Identifier name, DeclContext *dc,
     var = createDeclWithClangNode<VarDecl>(ClangN, AccessLevel::Public,
                                            /*IsStatic*/isStatic,
                                            VarDecl::Introducer::Var,
-                                           /*IsCaptureList*/false, SourceLoc(),
-                                           name, dc);
+                                           SourceLoc(), name, dc);
   } else {
     var = new (SwiftContext)
         VarDecl(/*IsStatic*/isStatic, VarDecl::Introducer::Var,
-                /*IsCaptureList*/false, SourceLoc(), name, dc);
+                SourceLoc(), name, dc);
   }
 
   var->setInterfaceType(type);
@@ -8668,7 +8723,6 @@ createUnavailableDecl(Identifier name, DeclContext *dc, Type type,
   auto var = createDeclWithClangNode<VarDecl>(ClangN, AccessLevel::Public,
                                               /*IsStatic*/isStatic,
                                               VarDecl::Introducer::Var,
-                                              /*IsCaptureList*/false,
                                               SourceLoc(), name, dc);
   var->setIsObjC(false);
   var->setIsDynamic(false);

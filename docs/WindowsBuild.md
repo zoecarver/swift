@@ -43,8 +43,8 @@ From the settings application, go to `Update & Security`.  In the `For developer
 
 ## Clone the repositories
 
-1. Clone `apple/llvm-project` into a directory for the toolchain
-2. Clone `apple/swift-cmark`, `apple/swift`, `apple/swift-corelibs-libdispatch`, `apple/swift-corelibs-foundation`, `apple/swift-corelibs-xctest`, `apple/swift-llbuild`, `apple/swift-package-manager` into the toolchain directory
+1. Clone `swift/main` branch of `apple/llvm-project` into the build workspace
+2. Clone `apple/swift-cmark`, `apple/swift`, `apple/swift-corelibs-libdispatch`, `apple/swift-corelibs-foundation`, `apple/swift-corelibs-xctest`, `apple/swift-tools-support-core`, `apple/swift-llbuild`, `apple/swift-argument-parser`, `apple/swift-driver`, `apple/swift-package-manager`, `JPSim/Yams`, `apple/indexstore-db` into the build workspace
 
 - Currently, other repositories in the Swift project have not been tested and may not be supported.
 
@@ -56,7 +56,7 @@ subst S: <path to sources>
 
 ```cmd
 S:
-git clone https://github.com/apple/llvm-project --branch swift/master llvm-project
+git clone https://github.com/apple/llvm-project --branch swift/main llvm-project
 git clone -c core.autocrlf=input -c core.symlinks=true https://github.com/apple/swift swift
 git clone https://github.com/apple/swift-cmark cmark
 git clone https://github.com/apple/swift-corelibs-libdispatch swift-corelibs-libdispatch
@@ -310,12 +310,12 @@ cmake -B S:\b\7 ^
   -D Foundation_DIR=S:\b\3\cmake\modules ^
   -D XCTest_DIR=S:\b\4\cmake\modules ^
   -G Ninja ^
-  -S S:\swift-llbuild
+  -S S:\Yams
 
 ninja -C S:\b\7
 ```
 
-## Build swift-driver
+## Build swift-argument-parser
 
 ```cmd
 cmake -B S:\b\8 ^
@@ -325,16 +325,14 @@ cmake -B S:\b\8 ^
   -D CMAKE_Swift_COMPILER=S:/b/1/bin/swiftc.exe ^
   -D dispatch_DIR=S:\b\2\cmake\modules ^
   -D Foundation_DIR=S:\b\3\cmake\modules ^
-  -D TSC_DIR=S:\b\5\cmake\modules ^
-  -D LLBuild_DIR=S:\b\6\cmake\modules ^
-  -D Yams_DIR=S:\b\7\cmake\modules ^
+  -D XCTest_DIR=S:\b\4\cmake\modules ^
   -G Ninja ^
-  -S S:\swift-driver
+  -S S:\swift-argument-parser
 
 ninja -C S:\b\8
 ```
 
-## Build swift-argument-parser
+## Build swift-driver
 
 ```cmd
 cmake -B S:\b\9 ^
@@ -344,9 +342,12 @@ cmake -B S:\b\9 ^
   -D CMAKE_Swift_COMPILER=S:/b/1/bin/swiftc.exe ^
   -D dispatch_DIR=S:\b\2\cmake\modules ^
   -D Foundation_DIR=S:\b\3\cmake\modules ^
-  -D XCTest_DIR=S:\b\4\cmake\modules ^
+  -D TSC_DIR=S:\b\5\cmake\modules ^
+  -D LLBuild_DIR=S:\b\6\cmake\modules ^
+  -D Yams_DIR=S:\b\7\cmake\modules ^
+  -D ArgumentParser_DIR=S:\b\8\cmake\modules ^
   -G Ninja ^
-  -S S:\swift-argument-parser
+  -S S:\swift-driver
 
 ninja -C S:\b\9
 ```
@@ -365,12 +366,17 @@ cmake -B S:\b\10 ^
   -D TSC_DIR=S:\b\5\cmake\modules ^
   -D LLBuild_DIR=S:\b\6\cmake\modules ^
   -D Yams_DIR=S:\b\7\cmake\modules ^
-  -D SwiftDriver_DIR=S:\b\8\cmake\modules ^
-  -D ArgumentParser_DIR=S:\b\9\cmake\modules ^
+  -D ArgumentParser_DIR=S:\b\8\cmake\modules ^
+  -D SwiftDriver_DIR=S:\b\9\cmake\modules ^
   -G Ninja ^
   -S S:\swift-package-manager
 
 ninja -C S:\b\10
+```
+
+Indicate to swift-package-manager where to find the Package Description before installation:
+```cmd
+set SWIFTPM_PD_LIBS=S:\b\10\pm
 ```
 
 ## Install the Swift toolchain on Windows
@@ -378,7 +384,7 @@ ninja -C S:\b\10
 - Run ninja install:
 
 ```cmd
-ninja -C S:\b\toolchain install
+ninja -C S:\b\1 install
 ```
 
 - Add the Swift on Windows binaries path (`C:\Library\Developer\Toolchains\unknown-Asserts-development.xctoolchain\usr\bin`) to the `PATH` environment variable.

@@ -23,6 +23,10 @@
 namespace swift {
 
 class AbstractFunctionDecl;
+class ActorIsolation;
+class ApplyExpr;
+enum class BodyInitKind;
+struct BodyInitKindAndExpr;
 class BraceStmt;
 class ClosureExpr;
 class CodeCompletionCallbacksFactory;

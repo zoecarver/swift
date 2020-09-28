@@ -576,16 +576,6 @@ def enable_fuzzy_forward_scan_trailing_closure_matching : Flag<["-"],
   Flags<[FrontendOption]>,
   HelpText<"Enable fuzzy forward-scan trailing closure matching">;
 
-def enable_direct_intramodule_dependencies : Flag<["-"],
-    "enable-direct-intramodule-dependencies">,
-  Flags<[FrontendOption, HelpHidden]>,
-  HelpText<"Enable experimental dependency tracking that never cascades">;
-
-def disable_direct_intramodule_dependencies : Flag<["-"],
-    "disable-direct-intramodule-dependencies">,
-  Flags<[FrontendOption, HelpHidden]>,
-  HelpText<"Disable experimental dependency tracking that never cascades">;
-
 def enable_experimental_cxx_interop :
   Flag<["-"], "enable-experimental-cxx-interop">,
   HelpText<"Allow importing C++ modules into Swift (experimental feature)">;
@@ -593,6 +583,11 @@ def enable_experimental_cxx_interop :
 def experimental_cxx_stdlib :
   Separate<["-"], "experimental-cxx-stdlib">,
   HelpText<"C++ standard library to use; forwarded to Clang's -stdlib flag">;
+
+def enable_experimental_cross_module_incremental_build :
+  Flag<["-"], "enable-experimental-cross-module-incremental-build">,
+  HelpText<"(experimental) Enable cross-module incremental build metadata and "
+           "driver scheduling">;
 
 
 // Diagnostic control options

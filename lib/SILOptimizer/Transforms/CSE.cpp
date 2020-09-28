@@ -220,12 +220,12 @@ public:
   }
 
   hash_code visitTupleExtractInst(TupleExtractInst *X) {
-    return llvm::hash_combine(X->getKind(), X->getTupleType(), X->getFieldNo(),
+    return llvm::hash_combine(X->getKind(), X->getTupleType(), X->getFieldIndex(),
                               X->getOperand());
   }
 
   hash_code visitTupleElementAddrInst(TupleElementAddrInst *X) {
-    return llvm::hash_combine(X->getKind(), X->getTupleType(), X->getFieldNo(),
+    return llvm::hash_combine(X->getKind(), X->getTupleType(), X->getFieldIndex(),
                               X->getOperand());
   }
 
@@ -374,7 +374,7 @@ public:
     OperandValueArrayRef Operands(X->getAllOperands());
     return llvm::hash_combine(X->getKind(),
                               X->getLookupType().getPointer(),
-                              X->getMember().getHashCode(),
+                              X->getMember(),
                               X->getConformance(),
                               X->getType(),
                               !X->getTypeDependentOperands().empty(),

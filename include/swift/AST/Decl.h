@@ -62,6 +62,7 @@ namespace swift {
   class DynamicSelfType;
   class Type;
   class Expr;
+  class CaptureListExpr;
   class DeclRefExpr;
   class ForeignAsyncConvention;
   class ForeignErrorConvention;
@@ -239,10 +240,14 @@ struct OverloadSignature {
   /// Whether this declaration has an opaque return type.
   unsigned HasOpaqueReturnType : 1;
 
+  /// Whether this declaration is 'async'
+  unsigned HasAsync : 1;
+
   OverloadSignature()
       : UnaryOperator(UnaryOperatorKind::None), IsInstanceMember(false),
         IsVariable(false), IsFunction(false), InProtocolExtension(false),
-        InExtensionOfGenericType(false), HasOpaqueReturnType(false) {}
+        InExtensionOfGenericType(false), HasOpaqueReturnType(false),
+        HasAsync(false) {}
 };
 
 /// Determine whether two overload signatures conflict.
@@ -348,20 +353,12 @@ protected:
     IsStatic : 1
   );
 
-  SWIFT_INLINE_BITFIELD(VarDecl, AbstractStorageDecl, 1+1+1+1+1+1+1+1,
+  SWIFT_INLINE_BITFIELD(VarDecl, AbstractStorageDecl, 1+1+1+1+1+1,
     /// Encodes whether this is a 'let' binding.
     Introducer : 1,
 
-    /// Whether this declaration was an element of a capture list.
-    IsCaptureList : 1,
-                        
     /// Whether this declaration captures the 'self' param under the same name.
     IsSelfParamCapture : 1,
-
-    /// Whether this vardecl has an initial value bound to it in a way
-    /// that isn't represented in the AST with an initializer in the pattern
-    /// binding.  This happens in cases like "for i in ...", switch cases, etc.
-    HasNonPatternBindingInit : 1,
 
     /// Whether this is a property used in expressions in the debugger.
     /// It is up to the debugger to instruct SIL how to access this variable.
@@ -454,14 +451,7 @@ protected:
                         /// Whether we have computed the above.
                         IsTransparentComputed : 1);
 
-  SWIFT_INLINE_BITFIELD(ConstructorDecl, AbstractFunctionDecl, 3+1+1,
-    /// The body initialization kind (+1), or zero if not yet computed.
-    ///
-    /// This value is cached but is not serialized, because it is a property
-    /// of the definition of the constructor that is useful only to semantic
-    /// analysis and SIL generation.
-    ComputedBodyInitKind : 3,
-
+  SWIFT_INLINE_BITFIELD(ConstructorDecl, AbstractFunctionDecl, 1+1,
     /// Whether this constructor can fail, by building an Optional type.
     Failable : 1,
 
@@ -581,7 +571,7 @@ protected:
     HasAnyUnavailableValues : 1
   );
 
-  SWIFT_INLINE_BITFIELD(ModuleDecl, TypeDecl, 1+1+1+1+1+1+1+1+1,
+  SWIFT_INLINE_BITFIELD(ModuleDecl, TypeDecl, 1+1+1+1+1+1+1+1+1+1,
     /// If the module was or is being compiled with `-enable-testing`.
     TestingEnabled : 1,
 
@@ -610,7 +600,10 @@ protected:
     IsNonSwiftModule : 1,
 
     /// Whether this module is the main module.
-    IsMainModule : 1
+    IsMainModule : 1,
+
+    /// Whether this module has incremental dependency information available.
+    HasIncrementalInfo : 1
   );
 
   SWIFT_INLINE_BITFIELD(PrecedenceGroupDecl, Decl, 1+2,
@@ -1328,6 +1321,12 @@ public:
 
   void print(raw_ostream &OS) const;
   SWIFT_DEBUG_DUMP;
+
+  bool walk(ASTWalker &walker);
+
+  /// Finds a generic parameter declaration by name. This should only
+  /// be used from the SIL parser.
+  GenericTypeParamDecl *lookUpGenericParam(Identifier name) const;
 };
   
 /// A trailing where clause.
@@ -1453,32 +1452,14 @@ public:
 static_assert(sizeof(_GenericContext) + sizeof(DeclContext) ==
               sizeof(GenericContext), "Please add fields to _GenericContext");
 
-/// Describes what kind of name is being imported.
-///
-/// If the enumerators here are changed, make sure to update all diagnostics
-/// using ImportKind as a select index.
-enum class ImportKind : uint8_t {
-  Module = 0,
-  Type,
-  Struct,
-  Class,
-  Enum,
-  Protocol,
-  Var,
-  Func
-};
-
 /// ImportDecl - This represents a single import declaration, e.g.:
 ///   import Swift
 ///   import typealias Swift.Int
 class ImportDecl final : public Decl,
-    private llvm::TrailingObjects<ImportDecl, Located<Identifier>> {
+    private llvm::TrailingObjects<ImportDecl, ImportPath::Element> {
   friend TrailingObjects;
   friend class Decl;
-public:
-  typedef Located<Identifier> AccessPathElement;
 
-private:
   SourceLoc ImportLoc;
   SourceLoc KindLoc;
 
@@ -1486,13 +1467,13 @@ private:
   ModuleDecl *Mod = nullptr;
 
   ImportDecl(DeclContext *DC, SourceLoc ImportLoc, ImportKind K,
-             SourceLoc KindLoc, ArrayRef<AccessPathElement> Path);
+             SourceLoc KindLoc, ImportPath Path);
 
 public:
   static ImportDecl *create(ASTContext &C, DeclContext *DC,
                             SourceLoc ImportLoc, ImportKind Kind,
                             SourceLoc KindLoc,
-                            ArrayRef<AccessPathElement> Path,
+                            ImportPath Path,
                             ClangNode ClangN = ClangNode());
 
   /// Returns the import kind that is most appropriate for \p VD.
@@ -1507,26 +1488,21 @@ public:
   /// cannot be overloaded, returns None.
   static Optional<ImportKind> findBestImportKind(ArrayRef<ValueDecl *> Decls);
 
-  ArrayRef<AccessPathElement> getFullAccessPath() const {
-    return {getTrailingObjects<AccessPathElement>(),
-            static_cast<size_t>(Bits.ImportDecl.NumPathElements)};
-  }
-
-  ArrayRef<AccessPathElement> getModulePath() const {
-    auto result = getFullAccessPath();
-    if (getImportKind() != ImportKind::Module)
-      result = result.slice(0, result.size()-1);
-    return result;
-  }
-
-  ArrayRef<AccessPathElement> getDeclPath() const {
-    if (getImportKind() == ImportKind::Module)
-      return {};
-    return getFullAccessPath().back();
-  }
-
   ImportKind getImportKind() const {
     return static_cast<ImportKind>(Bits.ImportDecl.ImportKind);
+  }
+
+  ImportPath getImportPath() const {
+    return ImportPath({ getTrailingObjects<ImportPath::Element>(),
+                        static_cast<size_t>(Bits.ImportDecl.NumPathElements) });
+  }
+
+  ImportPath::Module getModulePath() const {
+    return getImportPath().getModulePath(getImportKind());
+  }
+
+  ImportPath::Access getAccessPath() const {
+    return getImportPath().getAccessPath(getImportKind());
   }
 
   bool isExported() const {
@@ -1545,9 +1521,11 @@ public:
   }
 
   SourceLoc getStartLoc() const { return ImportLoc; }
-  SourceLoc getLocFromSource() const { return getFullAccessPath().front().Loc; }
+  SourceLoc getLocFromSource() const {
+    return getImportPath().getSourceRange().Start;
+  }
   SourceRange getSourceRange() const {
-    return SourceRange(ImportLoc, getFullAccessPath().back().Loc);
+    return SourceRange(ImportLoc, getImportPath().getSourceRange().End);
   }
   SourceLoc getKindLoc() const { return KindLoc; }
 
@@ -1965,8 +1943,6 @@ private:
 
   CaptureInfo getCaptureInfo() const { return Captures; }
   void setCaptureInfo(CaptureInfo captures) { Captures = captures; }
-
-  unsigned getNumBoundVariables() const;
 
 private:
   SourceLoc getLastAccessorEndLoc() const;
@@ -4003,6 +3979,9 @@ public:
     return getForeignClassKind() != ForeignKind::Normal;
   }
 
+  /// Whether the class is an actor.
+  bool isActor() const;
+
   /// Returns true if the class has designated initializers that are not listed
   /// in its members.
   ///
@@ -4138,12 +4117,14 @@ struct SelfReferenceKind {
     return SelfReferenceKind(false, false, false, false);
   }
 
-  /// The type refers to 'Self', but only as the result type of a method.
+  /// The type refers to 'Self', but only as the type of a property or
+  /// the result type of a method/subscript.
   static SelfReferenceKind Result() {
     return SelfReferenceKind(true, false, false, false);
   }
 
-  /// The type refers to 'Self', but only as the parameter type of a method.
+  /// The type refers to 'Self', but only as the parameter type
+  /// of a method/subscript.
   static SelfReferenceKind Parameter() {
     return SelfReferenceKind(false, true, false, false);
   }
@@ -4900,16 +4881,19 @@ public:
   };
 
 protected:
-  PointerUnion<PatternBindingDecl *, Stmt *, VarDecl *> Parent;
+  PointerUnion<PatternBindingDecl *,
+               Stmt *,
+               VarDecl *,
+               CaptureListExpr *> Parent;
 
   VarDecl(DeclKind kind, bool isStatic, Introducer introducer,
-          bool isCaptureList, SourceLoc nameLoc, Identifier name,
-          DeclContext *dc, StorageIsMutable_t supportsMutation);
+          SourceLoc nameLoc, Identifier name, DeclContext *dc,
+          StorageIsMutable_t supportsMutation);
 
 public:
-  VarDecl(bool isStatic, Introducer introducer, bool isCaptureList,
+  VarDecl(bool isStatic, Introducer introducer,
           SourceLoc nameLoc, Identifier name, DeclContext *dc)
-    : VarDecl(DeclKind::Var, isStatic, introducer, isCaptureList, nameLoc,
+    : VarDecl(DeclKind::Var, isStatic, introducer, nameLoc,
               name, dc, StorageIsMutable_t(introducer == Introducer::Var)) {}
 
   SourceRange getSourceRange() const;
@@ -5099,23 +5083,27 @@ public:
     Bits.VarDecl.Introducer = uint8_t(value);
   }
 
+  CaptureListExpr *getParentCaptureList() const {
+    if (!Parent)
+      return nullptr;
+    return Parent.dyn_cast<CaptureListExpr *>();
+  }
+
+  /// Set \p v to be the pattern produced VarDecl that is the parent of this
+  /// var decl.
+  void setParentCaptureList(CaptureListExpr *expr) {
+    assert(expr != nullptr);
+    Parent = expr;
+  }
   /// Is this an element in a capture list?
-  bool isCaptureList() const { return Bits.VarDecl.IsCaptureList; }
+  bool isCaptureList() const {
+    return getParentCaptureList() != nullptr;
+  }
     
   /// Is this a capture of the self param?
   bool isSelfParamCapture() const { return Bits.VarDecl.IsSelfParamCapture; }
   void setIsSelfParamCapture(bool IsSelfParamCapture = true) {
       Bits.VarDecl.IsSelfParamCapture = IsSelfParamCapture;
-  }
-
-  /// Return true if this vardecl has an initial value bound to it in a way
-  /// that isn't represented in the AST with an initializer in the pattern
-  /// binding.  This happens in cases like "for i in ...", switch cases, etc.
-  bool hasNonPatternBindingInit() const {
-    return Bits.VarDecl.HasNonPatternBindingInit;
-  }
-  void setHasNonPatternBindingInit(bool V = true) {
-    Bits.VarDecl.HasNonPatternBindingInit = V;
   }
 
   /// Determines if this var has an initializer expression that should be
@@ -5852,6 +5840,7 @@ protected:
   };
 
   friend class ParseAbstractFunctionBodyRequest;
+  friend class TypeCheckFunctionBodyRequest;
 
   CaptureInfo Captures;
 
@@ -5957,6 +5946,10 @@ public:
   /// Returns true if the function is an @asyncHandler.
   bool isAsyncHandler() const;
 
+  /// Returns true if the function signature matches the form of an
+  /// @asyncHandler.
+  bool canBeAsyncHandler() const;
+
   /// Returns true if the function body throws.
   bool hasThrows() const { return Bits.AbstractFunctionDecl.Throws; }
 
@@ -5985,7 +5978,12 @@ public:
   /// \sa hasBody()
   BraceStmt *getBody(bool canSynthesize = true) const;
 
-  void setBody(BraceStmt *S, BodyKind NewBodyKind = BodyKind::Parsed);
+  /// Retrieve the type-checked body of the given function, or \c nullptr if
+  /// there's no body available.
+  BraceStmt *getTypecheckedBody() const;
+
+  /// Set a new body for the function.
+  void setBody(BraceStmt *S, BodyKind NewBodyKind);
 
   /// Note that the body was skipped for this function.  Function body
   /// cannot be attached after this call.
@@ -6765,6 +6763,37 @@ enum class CtorInitializerKind {
   Factory
 };
 
+/// Specifies the kind of initialization call performed within the body
+/// of the constructor, e.g., self.init or super.init.
+enum class BodyInitKind {
+  /// There are no calls to self.init or super.init.
+  None,
+  /// There is a call to self.init, which delegates to another (peer)
+  /// initializer.
+  Delegating,
+  /// There is a call to super.init, which chains to a superclass initializer.
+  Chained,
+  /// There are no calls to self.init or super.init explicitly in the body of
+  /// the constructor, but a 'super.init' call will be implicitly added
+  /// by semantic analysis.
+  ImplicitChained
+};
+
+struct BodyInitKindAndExpr {
+  BodyInitKind initKind;
+  ApplyExpr *initExpr;
+
+  BodyInitKindAndExpr() : initKind(BodyInitKind::None), initExpr(nullptr) {}
+
+  BodyInitKindAndExpr(BodyInitKind initKind, ApplyExpr *initExpr)
+      : initKind(initKind), initExpr(initExpr) {}
+
+  friend bool operator==(BodyInitKindAndExpr lhs, BodyInitKindAndExpr rhs) {
+    return (lhs.initKind == rhs.initKind &&
+            lhs.initExpr == rhs.initExpr);
+  }
+};
+
 /// ConstructorDecl - Declares a constructor for a type.  For example:
 ///
 /// \code
@@ -6813,38 +6842,11 @@ public:
 
   ParamDecl **getImplicitSelfDeclStorage() { return &SelfDecl; }
 
-  /// Specifies the kind of initialization call performed within the body
-  /// of the constructor, e.g., self.init or super.init.
-  enum class BodyInitKind {
-    /// There are no calls to self.init or super.init.
-    None,
-    /// There is a call to self.init, which delegates to another (peer)
-    /// initializer.
-    Delegating,
-    /// There is a call to super.init, which chains to a superclass initializer.
-    Chained,
-    /// There are no calls to self.init or super.init explicitly in the body of
-    /// the constructor, but a 'super.init' call will be implicitly added
-    /// by semantic analysis.
-    ImplicitChained
-  };
-
   /// Determine whether the body of this constructor contains any delegating
   /// or superclass initializations (\c self.init or \c super.init,
   /// respectively) within its body.
-  ///
-  /// \param diags If non-null, this check will ensure that the constructor
-  /// body is consistent in its use of delegation vs. chaining and emit any
-  /// diagnostics through the given diagnostic engine.
-  ///
-  /// \param init If non-null and there is an explicit \c self.init or
-  /// \c super.init within the body, will be set to point at that
-  /// initializer.
-  BodyInitKind getDelegatingOrChainedInitKind(DiagnosticEngine *diags,
-                                              ApplyExpr **init = nullptr) const;
-  void clearCachedDelegatingOrChainedInitKind() {
-    Bits.ConstructorDecl.ComputedBodyInitKind = 0;
-  }
+  BodyInitKindAndExpr getDelegatingOrChainedInitKind() const;
+  void clearCachedDelegatingOrChainedInitKind();
 
   /// Whether this constructor is required.
   bool isRequired() const {

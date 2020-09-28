@@ -1487,8 +1487,14 @@ void Remangler::mangleImplFunctionType(Node *node) {
     mangle(PatternSubs->getChild(0));
     Buffer << 'y';
     mangleChildNodes(PatternSubs->getChild(1));
-    if (PatternSubs->getNumChildren() >= 3)
-      mangleRetroactiveConformance(PatternSubs->getChild(2));
+    if (PatternSubs->getNumChildren() >= 3) {
+      NodePointer retroactiveConf = PatternSubs->getChild(2);
+      if (retroactiveConf->getKind() == Node::Kind::TypeList) {
+        mangleChildNodes(retroactiveConf);
+      } else {
+        mangleRetroactiveConformance(retroactiveConf);
+      }
+    }
   }
 
   Buffer << 'I';
@@ -1531,6 +1537,7 @@ void Remangler::mangleImplFunctionType(Node *node) {
                         .Case("@convention(witness_method)", 'W')
                         .Case("@yield_once", 'A')
                         .Case("@yield_many", 'G')
+                        .Case("@async", 'H')
                         .Default(0);
         assert(FuncAttr && "invalid impl function attribute");
         Buffer << FuncAttr;
