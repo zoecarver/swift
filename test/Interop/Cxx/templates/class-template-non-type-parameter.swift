@@ -8,8 +8,8 @@ import StdlibUnittest
 var TemplatesTestSuite = TestSuite("TemplatesTestSuite")
 
 TemplatesTestSuite.test("typedeffed-non-type-parameter") {
-  var pair = MagicIntPair(data: (1, 2))
-  expectEqual(pair.data, (1, 2))
+  var pair = MagicIntPair(t: (1, 2))
+  expectEqual(pair.t, (1, 2))
 }
 
 // TODO(SR-13261): This test doesn't work because Swift only expects types as generic arguments.
