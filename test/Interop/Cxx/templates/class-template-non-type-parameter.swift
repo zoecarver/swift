@@ -2,7 +2,7 @@
 //
 // REQUIRES: executable_test
 
-import NonTypeParameter
+import ClassTemplateNonTypeParameter
 import StdlibUnittest
 
 var TemplatesTestSuite = TestSuite("TemplatesTestSuite")

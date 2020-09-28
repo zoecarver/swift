@@ -2,7 +2,7 @@
 //
 // REQUIRES: executable_test
 
-import VariadicClassTemplate
+import ClassTemplateVariadic
 import StdlibUnittest
 
 var TemplatesTestSuite = TestSuite("TemplatesTestSuite")
