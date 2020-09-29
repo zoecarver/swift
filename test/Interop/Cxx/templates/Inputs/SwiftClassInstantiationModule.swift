@@ -1,4 +1,4 @@
-import ClassTemplates
+import MagicWrapper
 
 public func makeWrappedMagicNumber() -> MagicWrapper<IntWrapper> {
   let t = IntWrapper(value: 42)

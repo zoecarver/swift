@@ -2,16 +2,15 @@
 //
 // REQUIRES: executable_test
 
-import MagicWrapper
+import UsingDirective
 import StdlibUnittest
 
 var TemplatesTestSuite = TestSuite("TemplatesTestSuite")
 
 TemplatesTestSuite.test("without-definition") {
-  let magicNumber = MagicNumber()
-  // var wrappedMagicNumber = MagicWrapper<MagicNumber>(t: magicNumber)
-  var wrappedMagicNumber = MagicWrapper<MagicNumber>()
-  expectEqual(wrappedMagicNumber.callGetInt(), 17)
+  var intWrapper = IntWrapper(value: 42)
+  var wrappedMagicNumber = MagicWrapper<IntWrapper>(t: intWrapper)
+  expectEqual(wrappedMagicNumber.getValuePlusArg(8), 50)
 }
 
 runAllTests()

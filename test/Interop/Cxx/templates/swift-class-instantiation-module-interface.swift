@@ -3,7 +3,7 @@
 // RUN: tree %t
 // RUN: %target-swift-ide-test -print-module -module-to-print=SwiftClassInstantiationModule -I %t -I %S/Inputs -source-filename=x -enable-cxx-interop | %FileCheck %s
 
-// CHECK: import ClassTemplates
+// CHECK: import MagicWrapper
 // CHECK: import SwiftOnoneSupport
 
 // CHECK: func makeWrappedMagicNumber() -> __CxxTemplateInst12MagicWrapperI10IntWrapperE
