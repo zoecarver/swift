@@ -42,8 +42,8 @@ module LinkageOfSwiftSymbolsForImportedTypes {
   header "linkage-of-swift-symbols-for-imported-types.h"
 }
 
-module ClassTemplates {
-  header "class-templates.h"
+module ClassTemplateInstantiationErrors {
+  header "class-template-instantiation-errors.h"
 }
 
 module ClassTemplateVariadic {
