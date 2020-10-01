@@ -234,24 +234,6 @@ static bool canSkipCircularityCheck(NominalTypeDecl *decl) {
 }
 
 bool
-HasCircularInheritanceRequest::evaluate(Evaluator &evaluator,
-                                        ClassDecl *decl) const {
-  if (canSkipCircularityCheck(decl) || !decl->hasSuperclass())
-    return false;
-
-  auto *superclass = decl->getSuperclassDecl();
-  auto result = evaluator(HasCircularInheritanceRequest{superclass});
-
-  // If we have a cycle, handle it and return true.
-  if (!result) {
-    using Error = CyclicalRequestError<HasCircularInheritanceRequest>;
-    llvm::handleAllErrors(result.takeError(), [](const Error &E) {});
-    return true;
-  }
-  return result.get();
-}
-
-bool
 HasCircularInheritedProtocolsRequest::evaluate(Evaluator &evaluator,
                                                ProtocolDecl *decl) const {
   if (canSkipCircularityCheck(decl))
@@ -2704,6 +2686,15 @@ SemanticMembersRequest::evaluate(Evaluator &evaluator,
 
   for (auto *member : idc->getMembers()) {
     if (auto *afd = dyn_cast<AbstractFunctionDecl>(member)) {
+      // If this is a witness to Actor.enqueue(partialTask:), put it at the
+      // beginning of the vtable.
+      if (auto func = dyn_cast<FuncDecl>(afd)) {
+        if (func->isActorEnqueuePartialTaskWitness()) {
+          result.insert(result.begin(), func);
+          continue;
+        }
+      }
+
       // Add synthesized members to a side table and sort them by their mangled
       // name, since they could have been added to the class in any order.
       if (afd->isSynthesized()) {
