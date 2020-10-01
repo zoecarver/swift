@@ -19,6 +19,7 @@
 #include "swift/AST/ActorIsolation.h"
 #include "swift/AST/AnyFunctionRef.h"
 #include "swift/AST/ASTTypeIDs.h"
+#include "swift/AST/GenericParamList.h"
 #include "swift/AST/GenericSignature.h"
 #include "swift/AST/Type.h"
 #include "swift/AST/Evaluator.h"
@@ -1983,29 +1984,6 @@ private:
 
 public:
   // Separate caching.
-  bool isCached() const { return true; }
-};
-
-/// Computes whether a class has a circular reference in its inheritance
-/// hierarchy.
-class HasCircularInheritanceRequest
-    : public SimpleRequest<HasCircularInheritanceRequest, bool(ClassDecl *),
-                           RequestFlags::Cached> {
-public:
-  using SimpleRequest::SimpleRequest;
-
-private:
-  friend SimpleRequest;
-
-  // Evaluation.
-  bool evaluate(Evaluator &evaluator, ClassDecl *decl) const;
-
-public:
-  // Cycle handling.
-  void diagnoseCycle(DiagnosticEngine &diags) const;
-  void noteCycleStep(DiagnosticEngine &diags) const;
-
-  // Cached.
   bool isCached() const { return true; }
 };
 
