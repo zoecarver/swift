@@ -454,6 +454,10 @@ function set_build_options_for_host() {
             SWIFT_HOST_TRIPLE="aarch64-unknown-linux-android"
             llvm_target_arch="AArch64"
             ;;
+        android-armv7)
+            SWIFT_HOST_TRIPLE="armv7-unknown-linux-androideabi"
+            llvm_target_arch="ARM"
+            ;;
         linux-armv6)
             SWIFT_HOST_TRIPLE="armv6-unknown-linux-gnueabihf"
             llvm_target_arch="ARM"
@@ -2012,7 +2016,7 @@ for host in "${ALL_HOSTS[@]}"; do
                 fi
 
                 # Construct dotest arguments. We use semicolons so CMake interprets this as a list.
-                DOTEST_ARGS="--build-dir;${lldb_build_dir}/lldb-test-build.noindex;${LLDB_TEST_CATEGORIES};-t"
+                DOTEST_ARGS="--build-dir;${lldb_build_dir}/lldb-test-build.noindex;${LLDB_TEST_CATEGORIES}"
 
                 # Only set the extra arguments if they're not empty.
                 if [[ -n "${DOTEST_EXTRA}" ]]; then
@@ -3049,7 +3053,7 @@ for host in "${ALL_HOSTS[@]}"; do
                grep -v '.py$' | \
                grep -v '.a$' | \
                grep -v 'swift-api-digester' | \
-               xargs -n 1 -P 1 ${dsymutil_path})
+               xargs -P 1 ${dsymutil_path})
 
             # Strip executables, shared libraries and static libraries in
             # `host_install_destdir`.

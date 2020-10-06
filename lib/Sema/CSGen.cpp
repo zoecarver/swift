@@ -3440,6 +3440,8 @@ namespace {
 
       // Generate constraints for each of the entries in the capture list.
       if (auto captureList = dyn_cast<CaptureListExpr>(expr)) {
+        TypeChecker::diagnoseDuplicateCaptureVars(captureList);
+
         auto &CS = CG.getConstraintSystem();
         for (const auto &capture : captureList->getCaptureList()) {
           SolutionApplicationTarget target(capture.Init);
@@ -3777,9 +3779,8 @@ bool ConstraintSystem::generateConstraints(
 
       // Substitute type variables in for unresolved types.
       if (allowFreeTypeVariables == FreeTypeVariableBinding::UnresolvedType) {
-        bool isForSingleExprFunction = (ctp == CTP_ReturnSingleExpr);
-        auto *convertTypeLocator = getConstraintLocator(
-            expr, LocatorPathElt::ContextualType(isForSingleExprFunction));
+        auto *convertTypeLocator =
+            getConstraintLocator(expr, LocatorPathElt::ContextualType());
 
         convertType = convertType.transform([&](Type type) -> Type {
           if (type->is<UnresolvedType>()) {

@@ -119,6 +119,10 @@ const clang::Module *ClangNode::getClangModule() const {
 }
 
 void ClangNode::dump() const {
+#if SWIFT_BUILD_ONLY_SYNTAXPARSERLIB
+  return; // not needed for the parser library.
+#endif
+
   if (auto D = getAsDecl())
     D->dump();
   else if (auto M = getAsMacro())
@@ -1447,7 +1451,8 @@ void PatternBindingEntry::setInit(Expr *E) {
 VarDecl *PatternBindingEntry::getAnchoringVarDecl() const {
   SmallVector<VarDecl *, 8> variables;
   getPattern()->collectVariables(variables);
-  assert(!variables.empty());
+  if (variables.empty())
+    return nullptr;
   return variables[0];
 }
 
@@ -5835,6 +5840,17 @@ VarDecl *VarDecl::getPropertyWrapperProjectionVar() const {
   return getPropertyWrapperBackingPropertyInfo().projectionVar;
 }
 
+void VarDecl::visitAuxiliaryDecls(llvm::function_ref<void(VarDecl *)> visit) const {
+  if (getDeclContext()->isTypeContext())
+    return;
+
+  if (auto *backingVar = getPropertyWrapperBackingProperty())
+    visit(backingVar);
+
+  if (auto *projectionVar = getPropertyWrapperProjectionVar())
+    visit(projectionVar);
+}
+
 VarDecl *VarDecl::getLazyStorageProperty() const {
   auto &ctx = getASTContext();
   auto mutableThis = const_cast<VarDecl *>(this);
@@ -8025,27 +8041,4 @@ void swift::simple_display(llvm::raw_ostream &out, AnyFunctionRef fn) {
     simple_display(out, func);
   else
     out << "closure";
-}
-
-bool Decl::isPrivateToEnclosingFile() const {
-  if (auto *VD = dyn_cast<ValueDecl>(this))
-    return VD->getFormalAccess() <= AccessLevel::FilePrivate;
-  switch (getKind()) {
-  case DeclKind::Import:
-  case DeclKind::PatternBinding:
-  case DeclKind::EnumCase:
-  case DeclKind::TopLevelCode:
-  case DeclKind::IfConfig:
-  case DeclKind::PoundDiagnostic:
-    return true;
-
-  case DeclKind::Extension:
-  case DeclKind::InfixOperator:
-  case DeclKind::PrefixOperator:
-  case DeclKind::PostfixOperator:
-    return false;
-
-  default:
-    llvm_unreachable("everything else is a ValueDecl");
-  }
 }
