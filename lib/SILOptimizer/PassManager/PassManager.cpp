@@ -824,6 +824,8 @@ enum class IRGenPasses : uint8_t {
 };
 } // end anonymous namespace
 
+SILTransform *createFooPass();
+
 void SILPassManager::addPass(PassKind Kind) {
   assert(unsigned(PassKind::AllPasses_Last) >= unsigned(Kind) &&
          "Invalid pass kind");

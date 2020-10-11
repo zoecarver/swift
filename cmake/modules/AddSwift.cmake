@@ -417,7 +417,8 @@ endfunction()
 function(add_swift_host_library name)
   set(options
         SHARED
-        STATIC)
+        STATIC
+        SWIFT_SOURCE)
   set(single_parameter_options)
   set(multiple_parameter_options
         LLVM_LINK_COMPONENTS)
@@ -460,7 +461,9 @@ function(add_swift_host_library name)
 
   add_library(${name} ${libkind} ${ASHL_SOURCES})
   add_dependencies(${name} ${LLVM_COMMON_DEPENDS})
-  llvm_update_compile_flags(${name})
+  if(NOT ASHL_SHARED)
+    llvm_update_compile_flags(${name})
+  endif()
   swift_common_llvm_config(${name} ${ASHL_LLVM_LINK_COMPONENTS})
   set_output_directory(${name}
       BINARY_DIR ${SWIFT_RUNTIME_OUTPUT_INTDIR}
@@ -484,10 +487,12 @@ function(add_swift_host_library name)
     BUILD_WITH_INSTALL_RPATH YES
     FOLDER "Swift libraries")
 
-  _add_host_variant_c_compile_flags(${name})
-  _add_host_variant_link_flags(${name})
-  _add_host_variant_c_compile_link_flags(${name})
-  _set_target_prefix_and_suffix(${name} "${libkind}" "${SWIFT_HOST_VARIANT_SDK}")
+  if(NOT ASHL_SHARED)
+    _add_host_variant_c_compile_flags(${name})
+    _add_host_variant_link_flags(${name})
+    _add_host_variant_c_compile_link_flags(${name})
+    _set_target_prefix_and_suffix(${name} "${libkind}" "${SWIFT_HOST_VARIANT_SDK}")
+  endif()
 
   # Set compilation and link flags.
   if(SWIFT_HOST_VARIANT_SDK STREQUAL WINDOWS)

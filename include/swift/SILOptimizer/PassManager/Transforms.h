@@ -172,4 +172,6 @@ namespace swift {
   };
 } // end namespace swift
 
+using SILTransform = swift::SILTransform;
+
 #endif
