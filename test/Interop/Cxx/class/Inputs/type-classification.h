@@ -178,4 +178,11 @@ struct StructWithCopyConstructorAndSubobjectCopyConstructorAndValue {
       : member(other.member) {}
 };
 
+struct DummyStruct {};
+
+struct HasUserProvidedDestructorAndDummy {
+  DummyStruct dummy;
+  ~HasUserProvidedDestructorAndDummy() {}
+};
+
 #endif
