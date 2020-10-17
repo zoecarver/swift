@@ -1791,8 +1791,8 @@ ASTMangler::getSpecialManglingContext(const ValueDecl *decl,
       if (hasNameForLinkage) {
         auto *clangDC = clangDecl->getDeclContext();
         if (isa<clang::NamespaceDecl>(clangDC)) return None;
-        assert(clangDC->getRedeclContext()->isTranslationUnit() &&
-               "non-top-level Clang types not supported yet");
+//        assert(clangDC->getRedeclContext()->isTranslationUnit() &&
+//               "non-top-level Clang types not supported yet");
         (void)clangDC;
         return ASTMangler::ObjCContext;
       }
