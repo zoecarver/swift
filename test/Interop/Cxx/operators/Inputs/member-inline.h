@@ -8,4 +8,14 @@ struct LoadableIntWrapper {
   }
 };
 
+struct AddressOnlyIntWrapper {
+  int value;
+  AddressOnlyIntWrapper(int value) : value(value) {}
+  AddressOnlyIntWrapper(AddressOnlyIntWrapper const &other)
+      : value(other.value) {}
+  AddressOnlyIntWrapper operator-(AddressOnlyIntWrapper rhs) {
+    return AddressOnlyIntWrapper(value - rhs.value);
+  }
+};
+
 #endif
