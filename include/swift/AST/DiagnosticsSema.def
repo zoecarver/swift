@@ -2761,9 +2761,6 @@ ERROR(unexportable_clang_function_type,none,
 ERROR(cxx_class_instantiation_failed,none,
       "clang couldn't instantiate class template",
       ())
-ERROR(cxx_class_instantiation_non_tag_argument,none,
-      "only struct/class/enum/union type arguments supported",
-      ())
 ERROR(cxx_class_instantiation_non_cxx_argument,none,
       "only C++ types supported",
       ())
@@ -4182,10 +4179,10 @@ NOTE(actor_mutable_state,none,
 WARNING(shared_mutable_state_access,none,
         "reference to %0 %1 is not concurrency-safe because it involves "
         "shared mutable state", (DescriptiveDeclKind, DeclName))
-NOTE(actor_isolated_witness,none,
+ERROR(actor_isolated_witness,none,
      "actor-isolated %0 %1 cannot be used to satisfy a protocol requirement",
      (DescriptiveDeclKind, DeclName))
-NOTE(actor_isolated_witness_could_be_async_handler,none,
+ERROR(actor_isolated_witness_could_be_async_handler,none,
      "actor-isolated %0 %1 cannot be used to satisfy a protocol requirement; "
      "did you mean to make it an asychronous handler?",
      (DescriptiveDeclKind, DeclName))

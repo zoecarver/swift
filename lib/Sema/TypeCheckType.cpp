@@ -842,14 +842,10 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
         Type argType = resolution.resolveType(argTypeRepr);
         auto *clangDecl = argType->getAnyNominal()->getDecl()->getClangDecl();
         if (clangDecl) {
-          if (auto *tagDecl = dyn_cast<clang::TagDecl>(clangDecl)) {
-            auto type =
-                classTemplateDecl->getASTContext().getTagDeclType(tagDecl);
-            templateArguments.push_back(clang::TemplateArgument(type));
-          } else {
-            diags.diagnose(loc, diag::cxx_class_instantiation_non_tag_argument);
-            return ErrorType::get(ctx);
-          }
+          auto *tagDecl = cast<clang::TagDecl>(clangDecl);
+          auto type =
+              classTemplateDecl->getASTContext().getTagDeclType(tagDecl);
+          templateArguments.push_back(clang::TemplateArgument(type));
         } else {
           diags.diagnose(loc, diag::cxx_class_instantiation_non_cxx_argument);
           return ErrorType::get(ctx);
@@ -857,7 +853,7 @@ static Type applyGenericArguments(Type type, TypeResolution resolution,
       }
 
       auto *clangModuleLoader = decl->getASTContext().getClangModuleLoader();
-      auto instantiatedDecl = clangModuleLoader->instantiateTemplate(
+      auto instantiatedDecl = clangModuleLoader->instantiateCXXClassTemplate(
           const_cast<clang::ClassTemplateDecl *>(classTemplateDecl),
           templateArguments);
       if (instantiatedDecl) {
