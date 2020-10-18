@@ -3374,6 +3374,13 @@ namespace {
           //
           // TODO: C++ types have different rules.
           if (auto nominalDecl = dyn_cast<NominalTypeDecl>(member->getDeclContext())) {
+            if (nominalDecl->getName().str() == "__CxxTemplateInstN4llvm12function_refIFbcEEE")
+              continue;
+            if (nominalDecl != result) {
+              llvm::errs() << "member = "; member->dump();
+              llvm::errs() << "nominalDecl = "; nominalDecl->dump();
+              llvm::errs() << "result = "; result->dump();
+            }
             assert(nominalDecl == result && "interesting nesting of C types?");
             nominalDecl->addMember(member);
           }

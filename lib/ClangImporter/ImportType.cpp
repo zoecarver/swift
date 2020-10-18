@@ -213,7 +213,7 @@ namespace {
 
 #define DEPENDENT_TYPE(Class, Base)                                            \
   ImportResult Visit##Class##Type(const clang::Class##Type *) {                \
-    llvm_unreachable("Dependent types cannot be converted");                   \
+    return Type();                                                             \
   }
 #define TYPE(Class, Base)
 #include "clang/AST/TypeNodes.inc"
@@ -842,13 +842,21 @@ namespace {
     SUGAR_TYPE(UnaryTransform)
     SUGAR_TYPE(Elaborated)
     SUGAR_TYPE(SubstTemplateTypeParm)
-    SUGAR_TYPE(TemplateSpecialization)
     SUGAR_TYPE(Auto)
     SUGAR_TYPE(DeducedTemplateSpecialization)
     SUGAR_TYPE(Adjusted)
     SUGAR_TYPE(PackExpansion)
     SUGAR_TYPE(Attributed)
     SUGAR_TYPE(MacroQualified)
+    
+    ImportResult VisitTemplateSpecializationType(
+                                const clang::TemplateSpecializationType *type) {
+      if (isa<clang::TemplateSpecializationType>(type->desugar())) {
+        // These should be handled elsewhere.
+        return Type();
+      }
+      return Visit(type->desugar());
+    }
 
     ImportResult VisitDecayedType(const clang::DecayedType *type) {
       clang::ASTContext &clangCtx = Impl.getClangASTContext();
@@ -1554,6 +1562,7 @@ ImportedType ClangImporter::Implementation::importType(
 
   // Perform abstract conversion, ignoring how the type is actually used.
   SwiftTypeConverter converter(*this, allowNSUIntegerAsInt, bridging);
+  type.dump();
   auto importResult = converter.Visit(type);
 
   // Now fix up the type based on how we're concretely using it.

@@ -28,7 +28,7 @@
 #include <vector>
 
 namespace llvm {
-  template<typename Fn> class function_ref;
+//  template<typename Fn> class function_ref;
   class MemoryBuffer;
 }
 

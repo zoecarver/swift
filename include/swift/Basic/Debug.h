@@ -12,6 +12,7 @@
 #ifndef SWIFT_BASIC_DEBUG_H
 #define SWIFT_BASIC_DEBUG_H
 
+// #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Compiler.h"
 
 

@@ -347,7 +347,7 @@ private:
 
   /// Cache of module names that fail the 'canImport' test in this context.
   llvm::SmallPtrSet<Identifier, 8> FailedModuleImportNames;
-  
+
   /// Retrieve the allocator for the given arena.
   llvm::BumpPtrAllocator &
   getAllocator(AllocationArena arena = AllocationArena::Permanent) const;
@@ -479,7 +479,7 @@ public:
   /// Retrieve the declaration of Swift.Error.
   ProtocolDecl *getErrorDecl() const;
   CanType getExceptionType() const;
-  
+
 #define KNOWN_STDLIB_TYPE_DECL(NAME, DECL_CLASS, NUM_GENERIC_PARAMS) \
   /** Retrieve the declaration of Swift.NAME. */ \
   DECL_CLASS *get##NAME##Decl() const;
@@ -487,7 +487,7 @@ public:
 
   /// Retrieve the declaration of Swift.Optional<T>.Some.
   EnumElementDecl *getOptionalSomeDecl() const;
-  
+
   /// Retrieve the declaration of Swift.Optional<T>.None.
   EnumElementDecl *getOptionalNoneDecl() const;
 
@@ -558,7 +558,7 @@ public:
   ConcreteDeclRef getBuiltinInitDecl(NominalTypeDecl *decl,
                                      KnownProtocolKind builtinProtocol,
                 llvm::function_ref<DeclName (ASTContext &ctx)> initName) const;
-  
+
   /// Retrieve the declaration of Swift.<(Int, Int) -> Bool.
   FuncDecl *getLessThanIntDecl() const;
 
@@ -580,7 +580,7 @@ public:
 
   // Retrieve the declaration of Swift._stdlib_isOSVersionAtLeast.
   FuncDecl *getIsOSVersionAtLeastDecl() const;
-  
+
   /// Look for the declaration with the given name within the
   /// Swift module.
   void lookupInSwiftModule(StringRef name,
@@ -588,7 +588,7 @@ public:
 
   /// Retrieve a specific, known protocol.
   ProtocolDecl *getProtocol(KnownProtocolKind kind) const;
-  
+
   /// Determine whether the given nominal type is one of the standard
   /// library or Cocoa framework types that is known to be bridged by another
   /// module's overlay, for layering or implementation detail reasons.
@@ -600,7 +600,7 @@ public:
   bool isObjCClassWithMultipleSwiftBridgedTypes(Type t);
 
   /// Get the Objective-C type that a Swift type bridges to, if any.
-  /// 
+  ///
   /// \param dc The context in which bridging is occurring.
   /// \param type The Swift for which we are querying bridging behavior.
   /// \param bridgedValueType The specific value type that is bridged,
@@ -664,7 +664,7 @@ public:
   /// Get the runtime availability of the objc_getClass() hook for the target
   /// platform.
   AvailabilityContext getObjCGetClassHookAvailability();
-  
+
   /// Get the runtime availability of features introduced in the Swift 5.0
   /// compiler for the target platform.
   AvailabilityContext getSwift50Availability();
@@ -685,7 +685,7 @@ public:
   /// swift_getTypeByMangledNameInContextInMetadataState.
   AvailabilityContext getTypesInAbstractMetadataStateAvailability();
 
-  /// Get the runtime availability of support for prespecialized generic 
+  /// Get the runtime availability of support for prespecialized generic
   /// metadata.
   AvailabilityContext getPrespecializedGenericMetadataAvailability();
 
@@ -727,7 +727,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   bool hadError() const;
-  
+
   //===--------------------------------------------------------------------===//
   // Type manipulation routines.
   //===--------------------------------------------------------------------===//
@@ -743,16 +743,16 @@ public:
   const CanType TheUnsafeValueBufferType; /// Builtin.UnsafeValueBuffer
   const CanType TheSILTokenType;          /// Builtin.SILToken
   const CanType TheIntegerLiteralType;    /// Builtin.IntegerLiteralType
-  
+
   const CanType TheIEEE32Type;            /// 32-bit IEEE floating point
   const CanType TheIEEE64Type;            /// 64-bit IEEE floating point
-  
+
   // Target specific types.
   const CanType TheIEEE16Type;            /// 16-bit IEEE floating point
   const CanType TheIEEE80Type;            /// 80-bit IEEE floating point
   const CanType TheIEEE128Type;           /// 128-bit IEEE floating point
   const CanType ThePPC128Type;            /// 128-bit PowerPC 2xDouble
-  
+
   /// Adds a search path to SearchPathOpts, unless it is already present.
   ///
   /// Does any proper bookkeeping to keep all module loaders up to date as well.
@@ -1029,10 +1029,10 @@ public:
   Type getSideCachedPropertyWrapperBackingPropertyType(VarDecl *var) const;
   void setSideCachedPropertyWrapperBackingPropertyType(VarDecl *var,
                                                         Type type);
-  
+
   /// Returns memory usage of this ASTContext.
   size_t getTotalMemory() const;
-  
+
   /// Returns memory used exclusively by constraint solver.
   size_t getSolverMemory() const;
 
@@ -1054,7 +1054,7 @@ public:
   /// Increments \c NumTypoCorrections then checks this against the limit in
   /// the language options.
   bool shouldPerformTypoCorrection();
-  
+
 private:
   /// Register the given generic signature builder to be used as the canonical
   /// generic signature builder for the given signature, if we don't already
@@ -1123,7 +1123,7 @@ public:
 
   /// Retrieve the IRGen specific SIL passes.
   SILTransformCtors getIRGenSILTransforms() const;
-  
+
   /// Check whether a given string would be considered "pure ASCII" by the
   /// standard library's String implementation.
   bool isASCIIString(StringRef s) const;

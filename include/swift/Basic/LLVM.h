@@ -28,6 +28,8 @@
 
 // Forward declarations.
 namespace llvm {
+  template<typename Fn> class function_ref;
+
   // Containers.
   class StringRef;
   class StringLiteral;
@@ -56,9 +58,6 @@ namespace llvm {
   class raw_ostream;
   class APInt;
   class APFloat;
-#if !defined(swiftCore_EXPORTS)
-  template <typename Fn> class function_ref;
-#endif
 } // end namespace llvm
 
 

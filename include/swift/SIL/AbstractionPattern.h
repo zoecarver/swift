@@ -21,10 +21,6 @@
 #include "swift/AST/Decl.h"
 #include "swift/AST/Types.h"
 
-namespace llvm {
-  template <class T> class function_ref;
-}
-
 namespace clang {
   class CXXMethodDecl;
   class ObjCMethodDecl;

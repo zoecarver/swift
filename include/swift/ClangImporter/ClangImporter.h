@@ -24,7 +24,6 @@
 namespace llvm {
   class Triple;
   class FileCollector;
-  template<typename Fn> class function_ref;
 }
 
 namespace clang {
