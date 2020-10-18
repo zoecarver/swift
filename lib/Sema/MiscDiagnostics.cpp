@@ -15,7 +15,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "MiscDiagnostics.h"
-#include "ConstraintSystem.h"
 #include "TypeCheckAvailability.h"
 #include "TypeCheckConcurrency.h"
 #include "TypeChecker.h"
@@ -29,6 +28,7 @@
 #include "swift/Basic/StringExtras.h"
 #include "swift/Parse/Lexer.h"
 #include "swift/Parse/Parser.h"
+#include "swift/Sema/ConstraintSystem.h"
 #include "swift/Sema/IDETypeChecking.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -4607,7 +4607,9 @@ void swift::performSyntacticExprDiagnostics(const Expr *E,
   checkActorIsolation(E, DC);
 }
 
-void swift::performStmtDiagnostics(ASTContext &ctx, const Stmt *S) {
+void swift::performStmtDiagnostics(const Stmt *S, DeclContext *DC) {
+  auto &ctx = DC->getASTContext();
+
   TypeChecker::checkUnsupportedProtocolType(ctx, const_cast<Stmt *>(S));
     
   if (auto switchStmt = dyn_cast<SwitchStmt>(S))
@@ -4619,6 +4621,9 @@ void swift::performStmtDiagnostics(ASTContext &ctx, const Stmt *S) {
   if (auto *lcs = dyn_cast<LabeledConditionalStmt>(S))
     for (const auto &elt : lcs->getCond())
       checkImplicitPromotionsInCondition(elt, ctx);
+
+  if (!ctx.LangOpts.DisableAvailabilityChecking)
+    diagAvailability(S, const_cast<DeclContext*>(DC));
 }
 
 //===----------------------------------------------------------------------===//

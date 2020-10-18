@@ -16,11 +16,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+<<<<<<< HEAD
+=======
+#include "CodeSynthesis.h"
+>>>>>>> main
 #include "CSDiagnostics.h"
 #include "CodeSynthesis.h"
-#include "ConstraintSystem.h"
 #include "MiscDiagnostics.h"
-#include "SolutionResult.h"
 #include "TypeCheckProtocol.h"
 #include "TypeCheckType.h"
 #include "swift/AST/ASTVisitor.h"
@@ -35,6 +37,8 @@
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/AST/SubstitutionMap.h"
 #include "swift/Basic/StringExtras.h"
+#include "swift/Sema/ConstraintSystem.h"
+#include "swift/Sema/SolutionResult.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Mangle.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -1581,10 +1585,8 @@ namespace {
     /// protocol is broken.
     ///
     /// \returns the converted literal expression.
-    Expr *convertLiteralInPlace(Expr *literal,
-                                Type type,
-                                ProtocolDecl *protocol,
-                                Identifier literalType,
+    Expr *convertLiteralInPlace(LiteralExpr *literal, Type type,
+                                ProtocolDecl *protocol, Identifier literalType,
                                 DeclName literalFuncName,
                                 ProtocolDecl *builtinProtocol,
                                 DeclName builtinLiteralFuncName,
@@ -2600,7 +2602,7 @@ namespace {
           KnownProtocolKind::ExpressibleByStringInterpolation, type,
           {ctx.Id_stringInterpolation});
       if (!resultInit) return nullptr;
-      expr->setResultInit(resultInit);
+      expr->setInitializer(resultInit);
 
       // Make the integer literals for the parameters.
       auto buildExprFromUnsigned = [&](unsigned value) {
@@ -4364,7 +4366,7 @@ namespace {
                                                 { Identifier() });
 
       auto resultTy = TypeChecker::typeCheckExpression(
-          callExpr, cs.DC, valueType, CTP_CannotFail);
+          callExpr, cs.DC, /*contextualInfo=*/{valueType, CTP_CannotFail});
       assert(resultTy && "Conversion cannot fail!");
       (void)resultTy;
 
@@ -7006,15 +7008,11 @@ ExprRewriter::coerceSelfArgumentToType(Expr *expr,
                                           /*isImplicit*/ true));
 }
 
-Expr *ExprRewriter::convertLiteralInPlace(Expr *literal,
-                                          Type type,
-                                          ProtocolDecl *protocol,
-                                          Identifier literalType,
-                                          DeclName literalFuncName,
-                                          ProtocolDecl *builtinProtocol,
-                                          DeclName builtinLiteralFuncName,
-                                          Diag<> brokenProtocolDiag,
-                                          Diag<> brokenBuiltinProtocolDiag) {
+Expr *ExprRewriter::convertLiteralInPlace(
+    LiteralExpr *literal, Type type, ProtocolDecl *protocol,
+    Identifier literalType, DeclName literalFuncName,
+    ProtocolDecl *builtinProtocol, DeclName builtinLiteralFuncName,
+    Diag<> brokenProtocolDiag, Diag<> brokenBuiltinProtocolDiag) {
   // If coercing a literal to an unresolved type, we don't try to look up the
   // witness members, just do it.
   if (type->is<UnresolvedType>()) {
@@ -7038,16 +7036,7 @@ Expr *ExprRewriter::convertLiteralInPlace(Expr *literal,
       // Form a reference to the builtin conversion function.
 
       // Set the builtin initializer.
-      if (auto stringLiteral = dyn_cast<StringLiteralExpr>(literal))
-        stringLiteral->setBuiltinInitializer(witness);
-      else if (auto booleanLiteral = dyn_cast<BooleanLiteralExpr>(literal))
-        booleanLiteral->setBuiltinInitializer(witness);
-      else if (auto numberLiteral = dyn_cast<NumberLiteralExpr>(literal))
-        numberLiteral->setBuiltinInitializer(witness);
-      else {
-        cast<MagicIdentifierLiteralExpr>(literal)->setBuiltinInitializer(
-            witness);
-      }
+      dyn_cast<BuiltinLiteralExpr>(literal)->setBuiltinInitializer(witness);
 
       // The literal expression has this type.
       cs.setType(literal, type);
@@ -7084,16 +7073,7 @@ Expr *ExprRewriter::convertLiteralInPlace(Expr *literal,
     return nullptr;
 
   // Set the initializer.
-  if (auto nilLiteral = dyn_cast<NilLiteralExpr>(literal))
-    nilLiteral->setInitializer(witness);
-  else if (auto stringLiteral = dyn_cast<StringLiteralExpr>(literal))
-    stringLiteral->setInitializer(witness);
-  else if (auto booleanLiteral = dyn_cast<BooleanLiteralExpr>(literal))
-    booleanLiteral->setInitializer(witness);
-  else if (auto numberLiteral = dyn_cast<NumberLiteralExpr>(literal))
-    numberLiteral->setInitializer(witness);
-  else
-    cast<MagicIdentifierLiteralExpr>(literal)->setInitializer(witness);
+  literal->setInitializer(witness);
 
   // The literal expression has this type.
   cs.setType(literal, type);
@@ -8094,8 +8074,8 @@ static Optional<SolutionApplicationTarget> applySolutionToForEachStmt(
     Expr *convertElementExpr = elementExpr;
     if (TypeChecker::typeCheckExpression(
             convertElementExpr, dc,
-            optPatternType,
-            CTP_CoerceOperand).isNull()) {
+            /*contextualInfo=*/{optPatternType, CTP_CoerceOperand})
+            .isNull()) {
       return None;
     }
     elementExpr->setIsPlaceholder(false);

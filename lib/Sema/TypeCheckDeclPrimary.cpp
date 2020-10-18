@@ -17,10 +17,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "CodeSynthesis.h"
-#include "ConstraintSystem.h"
 #include "DerivedConformances.h"
 #include "TypeChecker.h"
 #include "TypeCheckAccess.h"
+#include "TypeCheckConcurrency.h"
 #include "TypeCheckDecl.h"
 #include "TypeCheckAvailability.h"
 #include "TypeCheckObjC.h"
@@ -1382,7 +1382,8 @@ public:
       (void) VD->getFormalAccess();
 
       // Compute overrides.
-      (void) VD->getOverriddenDecls();
+      if (!VD->getOverriddenDecls().empty())
+        checkOverrideActorIsolation(VD);
 
       // Check whether the member is @objc or dynamic.
       (void) VD->isObjC();
@@ -1915,7 +1916,6 @@ public:
         if (!rawTy->is<ErrorType>()) {
           DE.diagnose(ED->getInherited().front().getSourceRange().Start,
                       diag::raw_type_not_literal_convertible, rawTy);
-          ED->getInherited().front().setType(ErrorType::get(getASTContext()));
         }
       }
       
@@ -2362,6 +2362,7 @@ public:
     } else if (FD->getDeclContext()->isLocalContext()) {
       // Check local function bodies right away.
       (void)FD->getTypecheckedBody();
+      TypeChecker::computeCaptures(FD);
     } else if (shouldSkipBodyTypechecking(FD)) {
       FD->setBodySkipped(FD->getBodySourceRange());
     } else {

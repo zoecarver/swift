@@ -1623,11 +1623,12 @@ bool ClangImporter::emitPrecompiledModule(StringRef moduleMapPath,
   LangOpts->CurrentModule = LangOpts->ModuleName;
 
   auto language = getLanguageFromOptions(LangOpts);
-  auto inputFile = clang::FrontendInputFile(
-      moduleMapPath, clang::InputKind(
-          language, clang::InputKind::ModuleMap, false));
 
   auto &FrontendOpts = invocation.getFrontendOpts();
+  auto inputFile = clang::FrontendInputFile(
+      moduleMapPath, clang::InputKind(
+          language, clang::InputKind::ModuleMap, false),
+      FrontendOpts.IsSystemModule);
   FrontendOpts.Inputs = {inputFile};
   FrontendOpts.OriginalModuleMap = moduleMapPath.str();
   FrontendOpts.OutputFile = outputPath.str();
@@ -3463,7 +3464,7 @@ ModuleDecl *ClangModuleUnit::getOverlayModule() const {
 }
 
 void ClangModuleUnit::getImportedModules(
-    SmallVectorImpl<ModuleDecl::ImportedModule> &imports,
+    SmallVectorImpl<ImportedModule> &imports,
     ModuleDecl::ImportFilter filter) const {
   // Bail out if we /only/ want ImplementationOnly imports; Clang modules never
   // have any of these.
@@ -3534,7 +3535,7 @@ void ClangModuleUnit::getImportedModules(
 }
 
 void ClangModuleUnit::getImportedModulesForLookup(
-    SmallVectorImpl<ModuleDecl::ImportedModule> &imports) const {
+    SmallVectorImpl<ImportedModule> &imports) const {
 
   // Reuse our cached list of imports if we have one.
   if (importedModulesForLookup.hasValue()) {
@@ -3559,7 +3560,7 @@ void ClangModuleUnit::getImportedModulesForLookup(
   }
 
   if (imported.empty()) {
-    importedModulesForLookup = ArrayRef<ModuleDecl::ImportedModule>();
+    importedModulesForLookup = ArrayRef<ImportedModule>();
     return;
   }
 

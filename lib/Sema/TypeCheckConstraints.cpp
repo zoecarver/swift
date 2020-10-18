@@ -16,9 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "ConstraintSystem.h"
 #include "MiscDiagnostics.h"
-#include "SolutionResult.h"
 #include "TypeChecker.h"
 #include "swift/AST/ASTVisitor.h"
 #include "swift/AST/ASTWalker.h"
@@ -30,6 +28,8 @@
 #include "swift/AST/TypeCheckRequests.h"
 #include "swift/Basic/Statistic.h"
 #include "swift/Sema/CodeCompletionTypeChecking.h"
+#include "swift/Sema/ConstraintSystem.h"
+#include "swift/Sema/SolutionResult.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -254,7 +254,7 @@ public:
   }
 
   std::pair<bool, Stmt *> walkToStmtPre(Stmt *stmt) override {
-    performStmtDiagnostics(dcStack.back()->getASTContext(), stmt);
+    performStmtDiagnostics(stmt, dcStack.back());
     return {true, stmt};
   }
 
@@ -300,11 +300,10 @@ void constraints::performSyntacticDiagnosticsForTarget(
 
 #pragma mark High-level entry points
 Type TypeChecker::typeCheckExpression(Expr *&expr, DeclContext *dc,
-                                      Type convertType,
-                                      ContextualTypePurpose convertTypePurpose,
+                                      ContextualTypeInfo contextualInfo,
                                       TypeCheckExprOptions options) {
   SolutionApplicationTarget target(
-      expr, dc, convertTypePurpose, convertType,
+      expr, dc, contextualInfo.purpose, contextualInfo.getType(),
       options.contains(TypeCheckExprFlags::IsDiscarded));
   auto resultTarget = typeCheckExpression(target, options);
   if (!resultTarget) {
@@ -422,9 +421,10 @@ Type TypeChecker::typeCheckParameterDefault(Expr *&defaultValue,
                                             DeclContext *DC, Type paramType,
                                             bool isAutoClosure) {
   assert(paramType && !paramType->hasError());
-  return typeCheckExpression(
-      defaultValue, DC, paramType,
-      isAutoClosure ? CTP_AutoclosureDefaultParameter : CTP_DefaultParameter);
+  return typeCheckExpression(defaultValue, DC, /*contextualInfo=*/
+                             {paramType, isAutoClosure
+                                             ? CTP_AutoclosureDefaultParameter
+                                             : CTP_DefaultParameter});
 }
 
 bool TypeChecker::typeCheckBinding(
@@ -593,7 +593,8 @@ bool TypeChecker::typeCheckCondition(Expr *&expr, DeclContext *dc) {
   // If this expression is already typechecked and has type Bool, then just
   // re-typecheck it.
   if (expr->getType() && expr->getType()->isBool()) {
-    auto resultTy = TypeChecker::typeCheckExpression(expr, dc);
+    auto resultTy =
+        TypeChecker::typeCheckExpression(expr, dc);
     return !resultTy;
   }
 
@@ -602,8 +603,8 @@ bool TypeChecker::typeCheckCondition(Expr *&expr, DeclContext *dc) {
     return true;
 
   auto resultTy = TypeChecker::typeCheckExpression(
-      expr, dc, boolDecl->getDeclaredInterfaceType(),
-      CTP_Condition);
+      expr, dc,
+      /*contextualInfo=*/{boolDecl->getDeclaredInterfaceType(), CTP_Condition});
   return !resultTy;
 }
 

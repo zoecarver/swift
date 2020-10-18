@@ -16,8 +16,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "CSDiagnostics.h"
-#include "CSFix.h"
-#include "ConstraintSystem.h"
 #include "swift/AST/ExistentialLayout.h"
 #include "swift/AST/GenericEnvironment.h"
 #include "swift/AST/GenericSignature.h"
@@ -28,6 +26,8 @@
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/Basic/StringExtras.h"
 #include "swift/ClangImporter/ClangModule.h"
+#include "swift/Sema/ConstraintSystem.h"
+#include "swift/Sema/CSFix.h"
 #include "swift/Sema/IDETypeChecking.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Compiler.h"
@@ -9913,16 +9913,11 @@ bool ConstraintSystem::recordFix(ConstraintFix *fix, unsigned impact) {
   return false;
 }
 
-void ConstraintSystem::recordPotentialHole(TypeVariableType *typeVar) {
-  assert(typeVar);
-  typeVar->getImpl().enableCanBindToHole(getSavedBindings());
-}
-
-void ConstraintSystem::recordPotentialHole(FunctionType *fnType) {
-  assert(fnType);
-  Type(fnType).visit([&](Type type) {
+void ConstraintSystem::recordPotentialHole(Type type) {
+  assert(type->hasTypeVariable());
+  type.visit([&](Type type) {
     if (auto *typeVar = type->getAs<TypeVariableType>())
-      recordPotentialHole(typeVar);
+      typeVar->getImpl().enableCanBindToHole(getSavedBindings());
   });
 }
 
@@ -10024,7 +10019,7 @@ ConstraintSystem::SolutionKind ConstraintSystem::simplifyFixConstraint(
           newTupleTypes.push_back(smallerElt);
       } else {
         if (largerElt.getType()->isTypeVariableOrMember())
-          recordPotentialHole(largerElt.getType()->getAs<TypeVariableType>());
+          recordPotentialHole(largerElt.getType());
       }
     }
     auto matchingType =

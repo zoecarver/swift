@@ -1161,6 +1161,13 @@ public:
   llvm::Value *getIndirectResult(unsigned index) override {
     return allParamValues.claimNext();
   };
+  llvm::Value *
+  getNextPolymorphicParameter(GenericRequirement &requirement) override {
+    return allParamValues.claimNext();
+  }
+  llvm::Value *getNextPolymorphicParameterAsMetadata() override {
+    return allParamValues.claimNext();
+  }
 };
 class AsyncEntryPointArgumentEmission
     : public virtual EntryPointArgumentEmission {
@@ -1212,6 +1219,13 @@ public:
   llvm::Value *getCoroutineBuffer() override {
     return allParamValues.claimNext();
   }
+
+public:
+  using SyncEntryPointArgumentEmission::requiresIndirectResult;
+  using SyncEntryPointArgumentEmission::getIndirectResultForFormallyDirectResult;
+  using SyncEntryPointArgumentEmission::getIndirectResult;
+  using SyncEntryPointArgumentEmission::getNextPolymorphicParameterAsMetadata;
+  using SyncEntryPointArgumentEmission::getNextPolymorphicParameter;
 };
 
 class AsyncNativeCCEntryPointArgumentEmission final
@@ -1220,6 +1234,15 @@ class AsyncNativeCCEntryPointArgumentEmission final
   llvm::Value *context;
   /*const*/ AsyncContextLayout layout;
   const Address dataAddr;
+  unsigned polymorphicParameterIndex = 0;
+
+  llvm::Value *loadValue(ElementLayout layout) {
+    Address addr = layout.project(IGF, dataAddr, /*offsets*/ llvm::None);
+    auto &ti = cast<LoadableTypeInfo>(layout.getType());
+    Explosion explosion;
+    ti.loadAsTake(IGF, addr, explosion);
+    return explosion.claimNext();
+  }
 
 public:
   AsyncNativeCCEntryPointArgumentEmission(IRGenSILFunction &IGF,
@@ -1234,36 +1257,17 @@ public:
     Address addr = errorLayout.project(IGF, dataAddr, /*offsets*/ llvm::None);
     return addr.getAddress();
   }
-  llvm::Value *getErrorResultAddrForCall() {
-    auto errorLayout = layout.getErrorLayout();
-    auto &ti = cast<LoadableTypeInfo>(errorLayout.getType());
-    auto allocaAddr = ti.allocateStack(IGF, layout.getErrorType(), "arg");
-    auto addrInContext =
-        layout.getErrorLayout().project(IGF, dataAddr, /*offsets*/ llvm::None);
-    Explosion explosion;
-    ti.loadAsTake(IGF, addrInContext, explosion);
-    ti.initialize(IGF, explosion, allocaAddr.getAddress(),
-                  /*isOutlined*/ false);
-    return allocaAddr.getAddress().getAddress();
-  }
   llvm::Value *getContext() override {
     auto contextLayout = layout.getLocalContextLayout();
-    Address addr = contextLayout.project(IGF, dataAddr, /*offsets*/ llvm::None);
-    auto &ti = cast<LoadableTypeInfo>(contextLayout.getType());
-    Explosion explosion;
-    ti.loadAsTake(IGF, addr, explosion);
-    return explosion.claimNext();
+    return loadValue(contextLayout);
   }
   Explosion getArgumentExplosion(unsigned index, unsigned size) override {
     assert(size > 0);
     Explosion result;
     for (unsigned i = index, end = index + size; i < end; ++i) {
       auto argumentLayout = layout.getArgumentLayout(i);
-      auto addr = argumentLayout.project(IGF, dataAddr, /*offsets*/ llvm::None);
-      auto &ti = cast<LoadableTypeInfo>(argumentLayout.getType());
-      Explosion explosion;
-      ti.loadAsTake(IGF, addr, explosion);
-      result.add(explosion.claimAll());
+      auto *value = loadValue(argumentLayout);
+      result.add(value);
     }
     return result;
   }
@@ -1273,19 +1277,58 @@ public:
                      "into indirect IR results because all results are already "
                      "indirected through the context");
   }
+  Address getNextUncastBinding() {
+    auto index = polymorphicParameterIndex;
+    ++polymorphicParameterIndex;
+
+    assert(layout.hasBindings());
+
+    auto bindingLayout = layout.getBindingsLayout();
+    auto bindingsAddr = bindingLayout.project(IGF, dataAddr, /*offsets*/ None);
+    auto erasedBindingsAddr =
+        IGF.Builder.CreateBitCast(bindingsAddr, IGF.IGM.Int8PtrPtrTy);
+    auto uncastBindingAddr = IGF.Builder.CreateConstArrayGEP(
+        erasedBindingsAddr, index, IGF.IGM.getPointerSize());
+    return uncastBindingAddr;
+  }
+  llvm::Value *castUncastBindingToMetadata(Address uncastBindingAddr) {
+    auto bindingAddrAddr = IGF.Builder.CreateBitCast(
+        uncastBindingAddr.getAddress(), IGF.IGM.TypeMetadataPtrPtrTy);
+    auto bindingAddr =
+        IGF.Builder.CreateLoad(bindingAddrAddr, IGF.IGM.getPointerAlignment());
+    return bindingAddr;
+  }
+  llvm::Value *castUncastBindingToWitnessTable(Address uncastBindingAddr) {
+    auto bindingAddrAddr = IGF.Builder.CreateBitCast(
+        uncastBindingAddr.getAddress(), IGF.IGM.WitnessTablePtrPtrTy);
+    auto bindingAddr =
+        IGF.Builder.CreateLoad(bindingAddrAddr, IGF.IGM.getPointerAlignment());
+    return bindingAddr;
+  }
+  llvm::Value *
+  getNextPolymorphicParameter(GenericRequirement &requirement) override {
+    auto uncastBindingAddr = getNextUncastBinding();
+    if (requirement.Protocol) {
+      return castUncastBindingToWitnessTable(uncastBindingAddr);
+    } else {
+      return castUncastBindingToMetadata(uncastBindingAddr);
+    }
+  }
+  llvm::Value *getNextPolymorphicParameterAsMetadata() override {
+    return castUncastBindingToMetadata(getNextUncastBinding());
+  }
   llvm::Value *getIndirectResult(unsigned index) override {
-    Address dataAddr = layout.emitCastTo(IGF, context);
-    unsigned baseIndirectReturnIndex = layout.getFirstIndirectReturnIndex();
-    unsigned elementIndex = baseIndirectReturnIndex + index;
-    auto &fieldLayout = layout.getElement(elementIndex);
-    Address fieldAddr =
-        fieldLayout.project(IGF, dataAddr, /*offsets*/ llvm::None);
-    return IGF.Builder.CreateLoad(fieldAddr);
+    auto fieldLayout = layout.getIndirectReturnLayout(index);
+    return loadValue(fieldLayout);
   };
   llvm::Value *getSelfWitnessTable() override {
-    llvm_unreachable("unimplemented");
+    auto fieldLayout = layout.getSelfWitnessTableLayout();
+    return loadValue(fieldLayout);
   }
-  llvm::Value *getSelfMetadata() override { llvm_unreachable("unimplemented"); }
+  llvm::Value *getSelfMetadata() override {
+    auto fieldLayout = layout.getSelfMetadataLayout();
+    return loadValue(fieldLayout);
+  }
   llvm::Value *getCoroutineBuffer() override {
     llvm_unreachable("unimplemented");
   }
@@ -1701,13 +1744,13 @@ static void emitEntryPointArgumentsNativeCC(IRGenSILFunction &IGF,
   // Bind polymorphic arguments.  This can only be done after binding
   // all the value parameters.
   if (hasPolymorphicParameters(funcTy)) {
-    emitPolymorphicParameters(IGF, *IGF.CurSILFn, allParamValues,
-                              &witnessMetadata,
-      [&](unsigned paramIndex) -> llvm::Value* {
-        SILValue parameter =
-          IGF.CurSILFn->getArgumentsWithoutIndirectResults()[paramIndex];
-        return IGF.getLoweredSingletonExplosion(parameter);
-      });
+    emitPolymorphicParameters(
+        IGF, *IGF.CurSILFn, *emission, &witnessMetadata,
+        [&](unsigned paramIndex) -> llvm::Value * {
+          SILValue parameter =
+              IGF.CurSILFn->getArgumentsWithoutIndirectResults()[paramIndex];
+          return IGF.getLoweredSingletonExplosion(parameter);
+        });
   }
 
   assert(allParamValues.empty() && "didn't claim all parameters!");
@@ -1802,7 +1845,7 @@ static void emitEntryPointArgumentsCOrObjC(IRGenSILFunction &IGF,
   // all the value parameters, and must be done even for non-polymorphic
   // functions because of imported Objective-C generics.
   emitPolymorphicParameters(
-      IGF, *IGF.CurSILFn, params, nullptr,
+      IGF, *IGF.CurSILFn, *emission, nullptr,
       [&](unsigned paramIndex) -> llvm::Value * {
         SILValue parameter = entry->getArguments()[paramIndex];
         return IGF.getLoweredSingletonExplosion(parameter);
@@ -3115,16 +3158,13 @@ static void emitReturnInst(IRGenSILFunction &IGF,
     auto layout = getAsyncContextLayout(IGF);
 
     Address dataAddr = layout.emitCastTo(IGF, context);
-    unsigned index = layout.getFirstDirectReturnIndex();
-    for (auto r :
-         IGF.CurSILFn->getLoweredFunctionType()->getDirectFormalResults()) {
-      (void)r;
-      auto &fieldLayout = layout.getElement(index);
+    for (unsigned index = 0, count = layout.getDirectReturnCount();
+         index < count; ++index) {
+      auto fieldLayout = layout.getDirectReturnLayout(index);
       Address fieldAddr =
           fieldLayout.project(IGF, dataAddr, /*offsets*/ llvm::None);
       cast<LoadableTypeInfo>(fieldLayout.getType())
           .initialize(IGF, result, fieldAddr, /*isOutlined*/ false);
-      ++index;
     }
     IGF.Builder.CreateRetVoid();
   } else {

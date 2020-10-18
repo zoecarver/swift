@@ -749,9 +749,14 @@ void ModuleDepGraph::printPath(raw_ostream &out,
 }
 
 StringRef ModuleDepGraph::getProvidingFilename(
-    const Optional<std::string> swiftDeps) const {
+    const Optional<std::string> &swiftDeps) const {
   if (!swiftDeps)
     return "<unknown";
+  auto ext = llvm::sys::path::extension(*swiftDeps);
+  if (file_types::lookupTypeForExtension(ext) ==
+      file_types::TY_SwiftModuleFile) {
+    return *swiftDeps;
+  }
   const StringRef inputName =
       llvm::sys::path::filename(getJob(swiftDeps)->getFirstSwiftPrimaryInput());
   // FineGrainedDependencyGraphTests work with simulated jobs with empty
