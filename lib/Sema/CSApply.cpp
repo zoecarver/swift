@@ -16,10 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-<<<<<<< HEAD
-=======
 #include "CodeSynthesis.h"
->>>>>>> main
 #include "CSDiagnostics.h"
 #include "CodeSynthesis.h"
 #include "MiscDiagnostics.h"
