@@ -3986,6 +3986,10 @@ namespace {
       if (correctSwiftName)
         markAsVariant(result, *correctSwiftName);
 
+      if (decl->isInvalidDecl()) {
+        Impl.markUnavailable(result, "function marked as invalid by clang");
+      }
+
       return result;
     }
 
@@ -4197,6 +4201,33 @@ namespace {
         return nullptr;
       return importFunctionDecl(decl->getAsFunction(), importedName,
                                 correctSwiftName, None, decl);
+    }
+
+    Decl *VisitClassTemplateDecl(const clang::ClassTemplateDecl *decl) {
+      Optional<ImportedName> correctSwiftName;
+      auto importedName = importFullName(decl, correctSwiftName);
+      auto name = importedName.getDeclName().getBaseIdentifier();
+      if (name.empty())
+        return nullptr;
+      auto loc = Impl.importSourceLoc(decl->getLocation());
+      auto dc = Impl.importDeclContextOf(
+          decl, importedName.getEffectiveContext());
+
+      SmallVector<GenericTypeParamDecl *, 4> genericParams;
+      for (auto &param : *decl->getTemplateParameters()) {
+        auto genericParamDecl = Impl.createDeclWithClangNode<GenericTypeParamDecl>(
+            param, AccessLevel::Public, dc,
+            Impl.SwiftContext.getIdentifier(param->getName()),
+            Impl.importSourceLoc(param->getLocation()),
+            /*depth*/ 0, /*index*/ genericParams.size());
+        genericParams.push_back(genericParamDecl);
+      }
+      auto genericParamList = GenericParamList::create(
+          Impl.SwiftContext, loc, genericParams, loc);
+
+      auto structDecl = Impl.createDeclWithClangNode<StructDecl>(
+        decl, AccessLevel::Public, loc, name, loc, None, genericParamList, dc);
+      return structDecl;
     }
 
     Decl *VisitUsingDecl(const clang::UsingDecl *decl) {
