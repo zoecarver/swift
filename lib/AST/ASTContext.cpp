@@ -1065,6 +1065,7 @@ ASTContext::getIntBuiltinInitDecl(NominalTypeDecl *intDecl) const {
     return DeclName(ctx, DeclBaseName::createConstructor(),
                     { Id_builtinIntegerLiteral });
   };
+  // TODO: handle booleans (ie. ExpressibleByBuiltinBooleanLiteral)
   auto builtinProtocolKind =
     KnownProtocolKind::ExpressibleByBuiltinIntegerLiteral;
   return getBuiltinInitDecl(intDecl, builtinProtocolKind, fn);

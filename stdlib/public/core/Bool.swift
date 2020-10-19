@@ -170,6 +170,13 @@ extension Bool: _ExpressibleByBuiltinBooleanLiteral, ExpressibleByBooleanLiteral
   }
 }
 
+extension Bool: _ExpressibleByBuiltinIntegerLiteral {
+  @_transparent
+  public init(_builtinIntegerLiteral x: Builtin.IntLiteral) {
+    self._value = Builtin.s_to_u_checked_trunc_IntLiteral_Int1(x).0
+  }
+}
+
 extension Bool: CustomStringConvertible {
   /// A textual representation of the Boolean value.
   @inlinable

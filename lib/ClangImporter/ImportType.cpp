@@ -61,6 +61,9 @@ bool ClangImporter::Implementation::isOverAligned(const clang::TypeDecl *decl) {
 }
 
 bool ClangImporter::Implementation::isOverAligned(clang::QualType type) {
+  // TODO: fix this.
+  if (type->isDependentType())
+    return false;
   auto align = getClangASTContext().getTypeAlignInChars(type);
   return align > clang::CharUnits::fromQuantity(MaximumAlignment);
 }
@@ -832,30 +835,29 @@ namespace {
       return { mappedType, underlyingResult.Hint };
     }
 
-#define SUGAR_TYPE(KIND)                                            \
-    ImportResult Visit##KIND##Type(const clang::KIND##Type *type) { \
-      return Visit(type->desugar());                                \
+#define SUGAR_TYPE(KIND)                                              \
+    ImportResult Visit##KIND##Type(const clang::KIND##Type *type) {   \
+      if (type->desugar().getTypePtr() == type) {                     \
+        return Visit(type->desugar());                                \
+      }                                                               \
+      return Type();                                                  \
     }
     SUGAR_TYPE(TypeOfExpr)
     SUGAR_TYPE(TypeOf)
     SUGAR_TYPE(Decltype)
     SUGAR_TYPE(UnaryTransform)
     SUGAR_TYPE(Elaborated)
+    SUGAR_TYPE(TemplateSpecialization)
     SUGAR_TYPE(SubstTemplateTypeParm)
     SUGAR_TYPE(Auto)
     SUGAR_TYPE(DeducedTemplateSpecialization)
     SUGAR_TYPE(Adjusted)
-    SUGAR_TYPE(PackExpansion)
     SUGAR_TYPE(Attributed)
     SUGAR_TYPE(MacroQualified)
-    
-    ImportResult VisitTemplateSpecializationType(
-                                const clang::TemplateSpecializationType *type) {
-      if (isa<clang::TemplateSpecializationType>(type->desugar())) {
-        // These should be handled elsewhere.
-        return Type();
-      }
-      return Visit(type->desugar());
+
+    // We cant do anything with this.
+    ImportResult VisitPackExpansionType(const clang::PackExpansionType *type) {
+      return Type();
     }
 
     ImportResult VisitDecayedType(const clang::DecayedType *type) {
@@ -1562,7 +1564,6 @@ ImportedType ClangImporter::Implementation::importType(
 
   // Perform abstract conversion, ignoring how the type is actually used.
   SwiftTypeConverter converter(*this, allowNSUIntegerAsInt, bridging);
-  type.dump();
   auto importResult = converter.Visit(type);
 
   // Now fix up the type based on how we're concretely using it.

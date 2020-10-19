@@ -426,7 +426,7 @@ static ValueDecl *importMacro(ClangImporter::Implementation &impl,
           return importNil(impl, DC, name, ClangN);
 
         auto macroID = impl.getClangPreprocessor().getMacroInfo(clangID);
-        if (macroID && macroID != macro) {
+        if (macroID && macroID != macro && clangID->getName() != name.str()) {
           // FIXME: This was clearly intended to pass the cast type down, but
           // doing so would be a behavior change.
           return importMacro(impl, DC, name, macroID, ClangN, /*castType*/{});

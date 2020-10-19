@@ -3374,14 +3374,11 @@ namespace {
           //
           // TODO: C++ types have different rules.
           if (auto nominalDecl = dyn_cast<NominalTypeDecl>(member->getDeclContext())) {
-            if (nominalDecl->getName().str() == "__CxxTemplateInstN4llvm12function_refIFbcEEE")
+//            if (nominalDecl->getName().str() == "__CxxTemplateInstN4llvm12function_refIFbcEEE")
+//              continue;
+            if (nominalDecl != result)
               continue;
-            if (nominalDecl != result) {
-              llvm::errs() << "member = "; member->dump();
-              llvm::errs() << "nominalDecl = "; nominalDecl->dump();
-              llvm::errs() << "result = "; result->dump();
-            }
-            assert(nominalDecl == result && "interesting nesting of C types?");
+//            assert(nominalDecl == result && "interesting nesting of C types?");
             nominalDecl->addMember(member);
           }
           continue;
@@ -3554,6 +3551,10 @@ namespace {
       auto def = dyn_cast<clang::ClassTemplateSpecializationDecl>(
           decl->getDefinition());
       assert(def && "Class template instantiation didn't have definition");
+
+      if (def->getTemplateParameterList(0)->size() == 0)
+        return nullptr;
+      
       // FIXME: This will instantiate all members of the specialization (and detect
       // instantiation failures in them), which can be more than is necessary
       // and is more than what Clang does. As a result we reject some C++
@@ -3727,12 +3728,14 @@ namespace {
     ParameterList *getNonSelfParamList(
         DeclContext *dc, const clang::FunctionDecl *decl,
         Optional<unsigned> selfIdx, ArrayRef<Identifier> argNames,
-        bool allowNSUIntegerAsInt, bool isAccessor) {
+        bool allowNSUIntegerAsInt, bool isAccessor,
+        ArrayRef<GenericTypeParamDecl *> genericParams) {
       if (bool(selfIdx)) {
         assert(((decl->getNumParams() == argNames.size() + 1) || isAccessor) &&
                (*selfIdx < decl->getNumParams()) && "where's self?");
       } else {
-        assert(decl->getNumParams() == argNames.size() || isAccessor);
+        // TODO: void (...)
+        assert(decl->getNumParams() <= argNames.size() || isAccessor);
       }
 
       SmallVector<const clang::ParmVarDecl *, 4> nonSelfParams;
@@ -3743,7 +3746,7 @@ namespace {
       }
       return Impl.importFunctionParameterList(
           dc, decl, nonSelfParams, decl->isVariadic(), allowNSUIntegerAsInt,
-          argNames, /*genericParams=*/{});
+          argNames, genericParams);
     }
 
     Decl *importGlobalAsInitializer(const clang::FunctionDecl *decl,
@@ -3880,7 +3883,7 @@ namespace {
 
         bodyParams =
             getNonSelfParamList(dc, decl, selfIdx, name.getArgumentNames(),
-                                allowNSUIntegerAsInt, !name);
+                                allowNSUIntegerAsInt, !name, templateParams);
 
         importedType =
             Impl.importFunctionReturnType(dc, decl, allowNSUIntegerAsInt);
@@ -3918,7 +3921,8 @@ namespace {
         name = DeclName(Impl.SwiftContext, name.getBaseName(), bodyParams);
       }
 
-      if (!importedType)
+      // TODO: why !bodyParams?
+      if (!importedType || !bodyParams)
         return nullptr;
 
       auto loc = Impl.importSourceLoc(decl->getLocation());
@@ -4016,6 +4020,9 @@ namespace {
     }
 
     Decl *VisitCXXMethodDecl(const clang::CXXMethodDecl *decl) {
+      // TODO: fix
+      if (decl->isTemplated() && decl->getParent()->isTemplated())
+        return nullptr;
       return VisitFunctionDecl(decl);
     }
 
