@@ -1,0 +1,7 @@
+module Parser {
+  header "Parser.h"
+}
+
+module Token {
+  header "Token.h"
+}

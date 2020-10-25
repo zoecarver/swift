@@ -1820,4 +1820,8 @@ tokenizeWithTrivia(const LangOptions &LangOpts,
                    DiagnosticEngine *Diags = nullptr);
 } // end namespace swift
 
+struct Foo {
+  using SwiftParser = swift::Parser;
+};
+
 #endif
