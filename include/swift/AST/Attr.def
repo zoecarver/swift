@@ -46,6 +46,15 @@
 #define TYPE_ATTR(X)
 #endif
 
+#define _TMP_IBAction IBAction
+#define IBAction IBAction
+
+#define _TMP_IBOutlet IBOutlet
+#define IBOutlet IBOutlet
+
+#define _TMP_IBInspectable IBInspectable
+#define IBInspectable IBInspectable
+
 // Type attributes
 TYPE_ATTR(autoclosure)
 TYPE_ATTR(convention)
@@ -637,3 +646,7 @@ DECL_ATTR(hasAsyncAlternative, HasAsyncAlternative,
 #undef CONTEXTUAL_SIMPLE_DECL_ATTR
 #undef DECL_ATTR
 #undef CONTEXTUAL_DECL_ATTR
+
+#define IBAction _TMP_IBAction
+#define IBOutlet _TMP_IBOutlet
+#define IBInspectable _TMP_IBInspectable
