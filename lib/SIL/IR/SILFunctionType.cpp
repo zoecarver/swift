@@ -1572,11 +1572,25 @@ private:
     // Add any foreign parameters that are positioned here.
     maybeAddForeignParameters();
 
+    bool isCxxOperator = origType.isCXXMethod() &&
+                         origType.getCXXMethod()->isOverloadedOperator();
+
     // Process all the non-self parameters.
     for (unsigned i = 0; i != numNonSelfParams; ++i) {
       auto ty = params[i].getParameterType();
       auto eltPattern = origType.getFunctionParamType(i);
       auto flags = params[i].getParameterFlags();
+      bool forSelf = false;
+
+      // If we have an inline operator, when it was imported, it was turned
+      // from a method into a static function. So, we need to shift over the
+      // params by one and use "self" as the first param's type.
+      if (isCxxOperator) {
+        if (i == 0)
+          forSelf = true;
+        else if (i == 1)
+          NextOrigParamIndex--;
+      }
 
       visit(flags.getValueOwnership(), /*forSelf=*/false, eltPattern, ty,
             flags.isNoDerivative());
