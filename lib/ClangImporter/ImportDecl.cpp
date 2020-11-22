@@ -3326,6 +3326,14 @@ namespace {
           continue;
         }
 
+        if (auto recordDecl = dyn_cast<clang::RecordDecl>(m)) {
+          // An injected class name decl will just point back to the parent
+          // decl, so don't import it.
+          if (recordDecl->isInjectedClassName()) {
+            continue;
+          }
+        }
+
         auto nd = dyn_cast<clang::NamedDecl>(m);
         if (!nd) {
           // We couldn't import the member, so we can't reference it in Swift.
@@ -3442,6 +3450,13 @@ namespace {
           ctors.push_back(valueCtor);
         }
       }
+
+      // If this record is declared inside of a nominal type (i.e. a namespace
+      // or another struct), then make sure to add it as a member of that
+      // declaration.
+      if (auto nominalDecl =
+              dyn_cast<NominalTypeDecl>(result->getDeclContext()))
+        nominalDecl->addMember(result);
 
       bool hasReferenceableFields = !members.empty();
 
