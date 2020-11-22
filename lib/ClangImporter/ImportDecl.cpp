@@ -3386,7 +3386,9 @@ namespace {
           //
           // TODO: C++ types have different rules.
           if (auto nominalDecl = dyn_cast<NominalTypeDecl>(member->getDeclContext())) {
-            assert(nominalDecl == result && "interesting nesting of C types?");
+            if (nominalDecl != result)
+              continue;
+            // assert(nominalDecl == result && "interesting nesting of C types?");
             nominalDecl->addMember(member);
           }
           continue;
@@ -3753,7 +3755,7 @@ namespace {
         assert(((decl->getNumParams() == argNames.size() + 1) || isAccessor) &&
                (*selfIdx < decl->getNumParams()) && "where's self?");
       } else {
-        assert(decl->getNumParams() == argNames.size() || isAccessor);
+        assert(decl->getNumParams() <= argNames.size() || isAccessor);
       }
 
       SmallVector<const clang::ParmVarDecl *, 4> nonSelfParams;
@@ -3940,7 +3942,7 @@ namespace {
         name = DeclName(Impl.SwiftContext, name.getBaseName(), bodyParams);
       }
 
-      if (!importedType)
+      if (!importedType || !bodyParams)
         return nullptr;
 
       auto loc = Impl.importSourceLoc(decl->getLocation());

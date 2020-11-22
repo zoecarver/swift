@@ -810,6 +810,7 @@ void IterableDeclContext::addMember(Decl *member, Decl *hint, bool insertAtHead)
   case IterableDeclContextKind::NominalTypeDecl: {
     auto nominal = cast<NominalTypeDecl>(this);
     nominal->addedMember(member);
+    member->setDeclContext(nominal);
     assert(member->getDeclContext() == nominal &&
            "Added member to the wrong context");
     break;
@@ -828,7 +829,7 @@ void IterableDeclContext::addMember(Decl *member, Decl *hint, bool insertAtHead)
 void IterableDeclContext::addMemberSilently(Decl *member, Decl *hint,
                                             bool insertAtHead) const {
   assert(!isa<AccessorDecl>(member) && "Accessors should not be added here");
-  assert(!member->NextDecl && "Already added to a container");
+//  assert(!member->NextDecl && "Already added to a container");
 
 #ifndef NDEBUG
   // Assert that new declarations are always added in source order.
