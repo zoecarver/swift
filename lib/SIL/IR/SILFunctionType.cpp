@@ -1562,6 +1562,15 @@ private:
         (extInfoBuilder.hasSelfParam() || Foreign.Self.isImportAsMember());
     unsigned numNonSelfParams = (hasSelf ? numEltTypes - 1 : numEltTypes);
     TopLevelOrigType = origType;
+    // If we have a foreign-self, install handleSelf as the handler.
+    if (Foreign.Self.isInstance()) {
+      assert(hasSelf && numEltTypes > 0);
+      ForeignSelf = ForeignSelfInfo{origType.getFunctionParamType(numNonSelfParams),
+                                    params[numNonSelfParams]};
+    }
+
+    // Add any foreign parameters that are positioned here.
+    maybeAddForeignParameters();
 
     // Process all the non-self parameters.
     for (unsigned i = 0; i != numNonSelfParams; ++i) {
@@ -1572,16 +1581,6 @@ private:
       visit(flags.getValueOwnership(), /*forSelf=*/false, eltPattern, ty,
             flags.isNoDerivative());
     }
-
-    // If we have a foreign-self, install handleSelf as the handler.
-    if (Foreign.Self.isInstance()) {
-      assert(hasSelf && numEltTypes > 0);
-      ForeignSelf = ForeignSelfInfo{origType.getFunctionParamType(numNonSelfParams),
-                                    params[numNonSelfParams]};
-    }
-
-    // Add any foreign parameters that are positioned here.
-    maybeAddForeignParameters();
 
     // Process the self parameter.  Note that we implicitly drop self
     // if this is a static foreign-self import.
@@ -1727,15 +1726,16 @@ private:
 
   bool maybeAddForeignSelfParameter() {
     if (!Foreign.Self.isInstance() ||
-        NextOrigParamIndex != Foreign.Self.getSelfIndex() ||
-        !ForeignSelf)
+        NextOrigParamIndex != Foreign.Self.getSelfIndex())
       return false;
 
-    // This is a "self", but it's not a Swift self, we handle it differently.
-    visit(ForeignSelf->SubstSelfParam.getValueOwnership(),
-          /*forSelf=*/false,
-          ForeignSelf->OrigSelfParam,
-          ForeignSelf->SubstSelfParam.getParameterType());
+    if (ForeignSelf) {
+      // This is a "self", but it's not a Swift self, we handle it differently.
+      visit(ForeignSelf->SubstSelfParam.getValueOwnership(),
+            /*forSelf=*/false,
+            ForeignSelf->OrigSelfParam,
+            ForeignSelf->SubstSelfParam.getParameterType());
+    }
     return true;
   }
 };

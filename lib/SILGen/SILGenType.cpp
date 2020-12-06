@@ -417,10 +417,9 @@ public:
     // If it's not an accessor, just look for the witness.
     if (!reqAccessor) {
       if (auto witness = asDerived().getWitness(reqDecl)) {
-        auto newDecl = requirementRef.withDecl(witness.getDecl());
-        if (witness.getDecl()->getClangDecl())
-          newDecl = newDecl.asForeign();
-        return addMethodImplementation(requirementRef, newDecl, witness);
+        return addMethodImplementation(
+            requirementRef, requirementRef.withDecl(witness.getDecl()),
+            witness);
       }
 
       return asDerived().addMissingMethod(requirementRef);
