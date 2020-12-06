@@ -3993,7 +3993,10 @@ namespace {
           else
             func->setSelfAccessKind(SelfAccessKind::NonMutating);
           if (selfIdx) {
-            func->setSelfIndex(selfIdx.getValue());
+            assert(*selfIdx == 0 &&
+                   "Clang methods should import 'this' as the first param.");
+            // Swift imports the "self" param last, even for clang functions.
+            func->setSelfIndex(bodyParams->size());
           } else {
             func->setStatic();
             func->setImportAsStaticMember();

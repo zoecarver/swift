@@ -4714,6 +4714,11 @@ void SILGenFunction::emitProtocolWitness(AbstractionPattern reqtOrigTy,
                                          witnessUnsubstTy->getSelfParameter());
   }
 
+  // Remove the metatype argument from C++ constructors.
+  if (witness.getDecl()->getClangDecl() &&
+      isa<clang::CXXConstructorDecl>(witness.getDecl()->getClangDecl()))
+    reqtSubstParams = reqtSubstParams.drop_back();
+
   // For a free function witness, discard the 'self' parameter of the
   // requirement.
   if (isFree) {
