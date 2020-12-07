@@ -2469,12 +2469,12 @@ static CanSILFunctionType getNativeSILFunctionType(
     AbstractionPattern origType, CanAnyFunctionType substInterfaceType,
     SILExtInfoBuilder extInfoBuilder, Optional<SILDeclRef> origConstant,
     Optional<SILDeclRef> constant, Optional<SubstitutionMap> reqtSubs,
-    ProtocolConformanceRef witnessMethodConformance, const ForeignInfo &foreignInfo) {
+    ProtocolConformanceRef witnessMethodConformance) {
   assert(bool(origConstant) == bool(constant));
   auto getSILFunctionTypeForConventions =
       [&](const Conventions &convs) -> CanSILFunctionType {
     return getSILFunctionType(TC, context, origType, substInterfaceType,
-                              extInfoBuilder, convs, foreignInfo,
+                              extInfoBuilder, convs, ForeignInfo(),
                               origConstant, constant, reqtSubs,
                               witnessMethodConformance);
   };
@@ -2532,7 +2532,7 @@ CanSILFunctionType swift::getNativeSILFunctionType(
 
   return ::getNativeSILFunctionType(
       TC, context, origType, substType, silExtInfo.intoBuilder(), origConstant,
-      substConstant, reqtSubs, witnessMethodConformance, ForeignInfo());
+      substConstant, reqtSubs, witnessMethodConformance);
 }
 
 //===----------------------------------------------------------------------===//
@@ -3187,19 +3187,19 @@ static CanSILFunctionType getUncachedSILFunctionTypeForConstant(
       witnessMethodConformance = ProtocolConformanceRef(proto);
     }
 
-    ForeignInfo foreignInfo;
-//    if (constant.hasDecl())
-//      if (auto ctor = dyn_cast_or_null<clang::CXXConstructorDecl>(constant.getDecl()->getClangDecl()))
-//        extInfoBuilder = extInfoBuilder.withClangFunctionType(
-//          static_cast<ClangImporter *>(TC.Context.getClangModuleLoader())
-//                                          ->getClangASTContext()
-//                                          .getPointerType(ctor->getType())
-//                                          .getTypePtr());
+    // This causes problems later on...
+    if (constant.hasDecl())
+      if (auto ctor = dyn_cast_or_null<clang::CXXConstructorDecl>(constant.getDecl()->getClangDecl()))
+        extInfoBuilder = extInfoBuilder.withClangFunctionType(
+          static_cast<ClangImporter *>(TC.Context.getClangModuleLoader())
+                                          ->getClangASTContext()
+                                          .getPointerType(ctor->getType())
+                                          .getTypePtr());
 
     return ::getNativeSILFunctionType(
         TC, context, AbstractionPattern(origLoweredInterfaceType),
         origLoweredInterfaceType, extInfoBuilder, constant, constant, None,
-        witnessMethodConformance, foreignInfo);
+        witnessMethodConformance);
   }
 
   ForeignInfo foreignInfo;

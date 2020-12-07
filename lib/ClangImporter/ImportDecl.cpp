@@ -3994,7 +3994,7 @@ namespace {
           else
             func->setSelfAccessKind(SelfAccessKind::NonMutating);
           if (selfIdx) {
-            func->setSelfIndex(*selfIdx);
+            func->setSelfIndex(selfIdx.getValue());
           } else {
             func->setStatic();
             func->setImportAsStaticMember();
