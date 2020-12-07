@@ -4714,11 +4714,21 @@ void SILGenFunction::emitProtocolWitness(AbstractionPattern reqtOrigTy,
                                          witnessUnsubstTy->getSelfParameter());
   }
 
-  // Remove the metatype argument from C++ constructors.
-  if (witness.getDecl()->getClangDecl() &&
-      isa<clang::CXXConstructorDecl>(witness.getDecl()->getClangDecl()))
-    reqtSubstParams = reqtSubstParams.drop_back();
-
+  // For static C++ methods and constructors, we need to drop the (metatype)
+  // "self" param. The "native" SIL representation will look like this:
+  //    @convention(method) (@thin Foo.Type) -> () but the "actual" SIL function
+  // looks like this:
+  //    @convention(c) () -> ()
+  // . We do this by simply omiting the last params.
+  if (auto clangDecl = witness.getDecl()->getClangDecl()) {
+    if (auto clangMethod = dyn_cast<clang::CXXMethodDecl>(clangDecl)) {
+      if (isa<clang::CXXConstructorDecl>(clangMethod) ||
+          clangMethod->isStatic()) {
+        reqtSubstParams = reqtSubstParams.drop_back();
+        witnessSubstParams = witnessSubstParams.drop_back();
+      }
+    }
+  }
   // For a free function witness, discard the 'self' parameter of the
   // requirement.
   if (isFree) {
@@ -4775,6 +4785,7 @@ void SILGenFunction::emitProtocolWitness(AbstractionPattern reqtOrigTy,
       emitApplyWithRethrow(loc, witnessFnRef, witnessSILTy, witnessSubs, args);
 
     // Reabstract the result value.
+    // The problem here is that "origWitnessFTy" is direct, and the ref type is indirect.
     reqtResultValue = resultPlanner->execute(witnessResultValue);
     break;
   }

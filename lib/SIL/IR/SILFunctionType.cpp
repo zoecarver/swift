@@ -2188,6 +2188,11 @@ static CanSILFunctionType getSILFunctionType(
                                     results, subst);
     destructurer.destructure(origResultType, substFormalResultType);
   }
+  
+  if (constant && constant->hasDecl() && constant->getDecl()->getClangDecl() &&
+      isa<clang::CXXConstructorDecl>(constant->getDecl()->getClangDecl()))
+    results.front() = SILResultInfo(results.front().getInterfaceType(),
+                                    ResultConvention::Indirect);
 
   // Lower the capture context parameters, if any.
   if (constant && constant->getAnyFunctionRef()) {
@@ -2464,12 +2469,12 @@ static CanSILFunctionType getNativeSILFunctionType(
     AbstractionPattern origType, CanAnyFunctionType substInterfaceType,
     SILExtInfoBuilder extInfoBuilder, Optional<SILDeclRef> origConstant,
     Optional<SILDeclRef> constant, Optional<SubstitutionMap> reqtSubs,
-    ProtocolConformanceRef witnessMethodConformance) {
+    ProtocolConformanceRef witnessMethodConformance, const ForeignInfo &foreignInfo) {
   assert(bool(origConstant) == bool(constant));
   auto getSILFunctionTypeForConventions =
       [&](const Conventions &convs) -> CanSILFunctionType {
     return getSILFunctionType(TC, context, origType, substInterfaceType,
-                              extInfoBuilder, convs, ForeignInfo(),
+                              extInfoBuilder, convs, foreignInfo,
                               origConstant, constant, reqtSubs,
                               witnessMethodConformance);
   };
@@ -2527,7 +2532,7 @@ CanSILFunctionType swift::getNativeSILFunctionType(
 
   return ::getNativeSILFunctionType(
       TC, context, origType, substType, silExtInfo.intoBuilder(), origConstant,
-      substConstant, reqtSubs, witnessMethodConformance);
+      substConstant, reqtSubs, witnessMethodConformance, ForeignInfo());
 }
 
 //===----------------------------------------------------------------------===//
@@ -3182,10 +3187,19 @@ static CanSILFunctionType getUncachedSILFunctionTypeForConstant(
       witnessMethodConformance = ProtocolConformanceRef(proto);
     }
 
+    ForeignInfo foreignInfo;
+//    if (constant.hasDecl())
+//      if (auto ctor = dyn_cast_or_null<clang::CXXConstructorDecl>(constant.getDecl()->getClangDecl()))
+//        extInfoBuilder = extInfoBuilder.withClangFunctionType(
+//          static_cast<ClangImporter *>(TC.Context.getClangModuleLoader())
+//                                          ->getClangASTContext()
+//                                          .getPointerType(ctor->getType())
+//                                          .getTypePtr());
+
     return ::getNativeSILFunctionType(
         TC, context, AbstractionPattern(origLoweredInterfaceType),
         origLoweredInterfaceType, extInfoBuilder, constant, constant, None,
-        witnessMethodConformance);
+        witnessMethodConformance, foreignInfo);
   }
 
   ForeignInfo foreignInfo;
@@ -4295,7 +4309,7 @@ TypeConverter::getLoweredFormalTypes(SILDeclRef constant,
   // If this is a C++ constructor, don't add the metatype "self" parameter
   // because we'll never use it and it will cause problems in IRGen.
   if (constant.getDecl()->getClangDecl() &&
-      isa<clang::CXXConstructorDecl>(constant.getDecl()->getClangDecl())) {
+      isa<clang::CXXConstructorDecl>(constant.getDecl()->getClangDecl()) && false) {
     // But, make sure it is actually a metatype that we're not adding. If
     // changes to the self parameter are made in the future, this logic may
     // need to be updated.

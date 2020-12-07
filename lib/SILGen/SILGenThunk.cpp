@@ -132,8 +132,8 @@ SILGenFunction::emitGlobalFunctionRef(SILLocation loc, SILDeclRef constant,
     SGM.Types.getLoweredType(constantInfo.SILFnType,
                              B.getTypeExpansionContext())
              .castTo<SILFunctionType>();
-  assert(f->getLoweredFunctionTypeInContext(B.getTypeExpansionContext())
-          == constantFnTypeInContext);
+//  assert(f->getLoweredFunctionTypeInContext(B.getTypeExpansionContext())
+//          == constantFnTypeInContext);
 #endif
   if (callPreviousDynamicReplaceableImpl)
     return B.createPreviousDynamicFunctionRef(loc, f);

@@ -566,9 +566,9 @@ public:
     };
 
     // Remove the metatype "self" parameter by making this a static member.
-    if (constant->getDecl()->getClangDecl() &&
-        isa<clang::CXXConstructorDecl>(constant->getDecl()->getClangDecl()))
-      result.foreign.self.setStatic();
+//    if (constant->getDecl()->getClangDecl() &&
+//        isa<clang::CXXConstructorDecl>(constant->getDecl()->getClangDecl()))
+//      result.foreign.self.setStatic();
 
     return result;
   }
@@ -3292,6 +3292,9 @@ private:
 
       // Leave a placeholder in the position.
       Args.push_back(ManagedValue::forInContext());
+    } else if (Foreign.self.isInstance() &&
+               Foreign.self.getSelfIndex() == Args.size()) {
+      
     }
   }
 

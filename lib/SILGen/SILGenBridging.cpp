@@ -1652,7 +1652,8 @@ void SILGenFunction::emitForeignToNativeThunk(SILDeclRef thunk) {
   auto fd = cast<AbstractFunctionDecl>(thunk.getDecl());
   auto nativeCI = getConstantInfo(getTypeExpansionContext(), thunk);
   auto nativeFnTy = F.getLoweredFunctionType();
-  assert(nativeFnTy == nativeCI.SILFnType);
+  assert(nativeFnTy == nativeCI.SILFnType ||
+         nativeFnTy->getExtInfo().getLanguage() == SILFunctionLanguage::C);
 
   // Use the same generic environment as the native entry point.
   F.setGenericEnvironment(SGM.Types.getConstantGenericEnvironment(thunk));
