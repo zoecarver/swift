@@ -3299,13 +3299,21 @@ namespace {
 
       // Create the struct declaration and record it.
       auto name = importedName.getDeclName().getBaseIdentifier();
-      auto result = Impl.createDeclWithClangNode<StructDecl>(decl,
-                                 AccessLevel::Public,
-                                 Impl.importSourceLoc(decl->getBeginLoc()),
-                                 name,
-                                 Impl.importSourceLoc(decl->getLocation()),
-                                 None, nullptr, dc);
-      Impl.ImportedDecls[{decl->getCanonicalDecl(), getVersion()}] = result;
+      StructDecl *result = nullptr;
+      // Try to find a cached struct. This case happens any time there are
+      // nested structs. The "Parent" struct will import the "Child" struct
+      // at which point it attempts to import its decl context which is the
+      // "Parent" struct. Without caching this will cause an infinite loop.
+      auto cachedResult = Impl.ImportedDecls.find({decl, getVersion()});
+      if (cachedResult != Impl.ImportedDecls.end()) {
+        result = cast<StructDecl>(cachedResult->second);
+      } else {
+        result = Impl.createDeclWithClangNode<StructDecl>(
+            decl, AccessLevel::Public,
+            Impl.importSourceLoc(decl->getBeginLoc()), name,
+            Impl.importSourceLoc(decl->getLocation()), None, nullptr, dc);
+        Impl.ImportedDecls[{decl->getCanonicalDecl(), getVersion()}] = result;
+      }
 
       // FIXME: Figure out what to do with superclasses in C++. One possible
       // solution would be to turn them into members and add conversion
@@ -3315,11 +3323,25 @@ namespace {
       SmallVector<VarDecl *, 4> members;
       SmallVector<FuncDecl *, 4> methods;
       SmallVector<ConstructorDecl *, 4> ctors;
+      SmallVector<TypeDecl *, 4> memberTypes;
 
       // FIXME: Import anonymous union fields and support field access when
       // it is nested in a struct.
 
       for (auto m : decl->decls()) {
+        // Sometimes we import a record while importing its members (if one of
+        // its members points back to the parent record). If this is the case,
+        // then simply return the already-imported record. This is not only for
+        // performance; such a case will cause the imported members to have two
+        // separately constructed parents.
+        //
+        // In this loop, we don't actually add any members to "result," so if
+        // there are any members, it means we've already imported it and we can
+        // just bail.
+        if (!result->getMembers().empty()) {
+          return result;
+        }
+
         if (isa<clang::AccessSpecDecl>(m)) {
           // The presence of AccessSpecDecls themselves does not influence
           // whether we can generate a member-wise initializer.
@@ -3373,22 +3395,8 @@ namespace {
           continue;
         }
 
-        if (isa<TypeDecl>(member)) {
-          // A struct nested inside another struct will either be logically
-          // a sibling of the outer struct, or contained inside of it, depending
-          // on if it has a declaration name or not.
-          //
-          // struct foo { struct bar { ... } baz; } // sibling
-          // struct foo { struct { ... } baz; } // child
-          //
-          // In the latter case, we add the imported type as a nested type
-          // of the parent.
-          //
-          // TODO: C++ types have different rules.
-          if (auto nominalDecl = dyn_cast<NominalTypeDecl>(member->getDeclContext())) {
-            assert(nominalDecl == result && "interesting nesting of C types?");
-            nominalDecl->addMember(member);
-          }
+        if (auto subType = dyn_cast<TypeDecl>(member)) {
+          memberTypes.push_back(subType);
           continue;
         }
 
@@ -3411,7 +3419,29 @@ namespace {
         }
 
         members.push_back(VD);
+      }
+      
+      for (auto subType : memberTypes) {
+        // A struct nested inside another struct will either be logically
+        // a sibling of the outer struct, or contained inside of it, depending
+        // on if it has a declaration name or not.
+        //
+        // struct foo { struct bar { ... } baz; } // sibling
+        // struct foo { struct { ... } baz; } // child
+        //
+        // In the latter case, we add the imported type as a nested type
+        // of the parent.
+        //
+        // TODO: C++ types have different rules.
+        if (auto nominalDecl = dyn_cast<NominalTypeDecl>(subType->getDeclContext())) {
+          assert(nominalDecl == result && "interesting nesting of C types?");
+          nominalDecl->addMember(subType);
+        }
+      }
 
+      bool hasReferenceableFields = !members.empty();
+      for (auto member : members) {
+        auto nd = cast<clang::NamedDecl>(member->getClangDecl());
         // Bitfields are imported as computed properties with Clang-generated
         // accessors.
         bool isBitField = false;
@@ -3426,32 +3456,31 @@ namespace {
                                   const_cast<clang::RecordDecl *>(decl),
                                   result,
                                   const_cast<clang::FieldDecl *>(field),
-                                  VD);
+                                  member);
           }
         }
 
         if (auto ind = dyn_cast<clang::IndirectFieldDecl>(nd)) {
           // Indirect fields are created as computed property accessible the
           // fields on the anonymous field from which they are injected.
-          makeIndirectFieldAccessors(Impl, ind, members, result, VD);
+          makeIndirectFieldAccessors(Impl, ind, members, result, member);
         } else if (decl->isUnion() && !isBitField) {
           // Union fields should only be available indirectly via a computed
           // property. Since the union is made of all of the fields at once,
           // this is a trivial accessor that casts self to the correct
           // field type.
-          makeUnionFieldAccessors(Impl, result, VD);
+          makeUnionFieldAccessors(Impl, result, member);
 
           // Create labeled initializers for unions that take one of the
           // fields, which only initializes the data for that field.
           auto valueCtor =
-              createValueConstructor(Impl, result, VD,
+              createValueConstructor(Impl, result, member,
                                      /*want param names*/true,
                                      /*wantBody=*/true);
           ctors.push_back(valueCtor);
         }
+        result->addMember(member);
       }
-
-      bool hasReferenceableFields = !members.empty();
 
       const clang::CXXRecordDecl *cxxRecordDecl =
           dyn_cast<clang::CXXRecordDecl>(decl);
@@ -3478,10 +3507,6 @@ namespace {
           valueCtor->setIsMemberwiseInitializer();
 
         ctors.push_back(valueCtor);
-      }
-
-      for (auto member : members) {
-        result->addMember(member);
       }
 
       for (auto ctor : ctors) {
@@ -8879,7 +8904,9 @@ ClangImporter::Implementation::loadAllMembers(Decl *D, uint64_t extra) {
         if (!member)
           continue;
 
-        enumDecl->addMember(member);
+        // TODO: remove this change when #34706 lands.
+        if (!member->NextDecl)
+          enumDecl->addMember(member);
       }
     }
     return;

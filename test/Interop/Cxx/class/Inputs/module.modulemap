@@ -45,3 +45,7 @@ module DebugInfo {
 module NestedRecords {
   header "nested-records.h"
 }
+
+module LinkedRecords {
+  header "linked-records.h"
+}
