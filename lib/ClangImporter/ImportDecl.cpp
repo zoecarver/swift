@@ -3474,34 +3474,8 @@ namespace {
           continue;
         }
 
-<<<<<<< HEAD
         if (auto subType = dyn_cast<TypeDecl>(member)) {
           memberTypes.push_back(subType);
-=======
-        if (isa<TypeDecl>(member)) {
-          if (auto record = dyn_cast<clang::RecordDecl>(nd)) {
-            // If this record only being declared inside of "decl" then simply
-            // ignore it because it's a forward declaration.
-            if (record->getDefinition() != record)
-              continue;
-          }
-          
-          // A struct nested inside another struct will either be logically
-          // a sibling of the outer struct, or contained inside of it, depending
-          // on if it has a declaration name or not.
-          //
-          // struct foo { struct bar { ... } baz; } // sibling
-          // struct foo { struct { ... } baz; } // child
-          //
-          // In the latter case, we add the imported type as a nested type
-          // of the parent.
-          //
-          // TODO: C++ types have different rules.
-          if (auto nominalDecl = dyn_cast<NominalTypeDecl>(member->getDeclContext())) {
-            assert(nominalDecl == result && "interesting nesting of C types?");
-            nominalDecl->addMember(member);
-          }
->>>>>>> cxx/fix/friends
           continue;
         }
 
