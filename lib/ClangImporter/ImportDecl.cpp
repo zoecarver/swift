@@ -2444,20 +2444,99 @@ namespace {
       auto importedName = importFullName(decl, correctSwiftName);
       if (!importedName) return nullptr;
 
-      auto dc =
+      auto extensionDC =
           Impl.importDeclContextOf(decl, importedName.getEffectiveContext());
-      if (!dc)
+      if (!extensionDC)
         return nullptr;
 
       SourceLoc loc = Impl.importSourceLoc(decl->getBeginLoc());
-
-      // FIXME: If Swift gets namespaces, import as a namespace.
-      auto enumDecl = Impl.createDeclWithClangNode<EnumDecl>(
+      DeclContext *dc = nullptr;
+      // If this is a top-level enum, don't put it in the module we're
+      // importing, put it in the "__ObjC" module that is transitively imported.
+      // This way, if we have multiple modules that all open the same namespace,
+      // we won't import multiple enums with the same name in swift.
+      if (extensionDC->getContextKind() == DeclContextKind::FileUnit)
+        dc = Impl.ImportedHeaderUnit;
+      else {
+        // If this is a nested namespace, we need to find its extension decl
+        // context and then use that to find the parent enum. It's important
+        // that we add this to the parent enum (in the "__ObjC" module) and not
+        // the extension.
+        if (auto parentNS = dyn_cast<clang::NamespaceDecl>(decl->getParent())) {
+          auto ext =
+              cast<ExtensionDecl>(Impl.importDecl(parentNS, getVersion()));
+          dc = ext->getExtendedType()->getEnumOrBoundGenericEnum();
+        } else {
+          // Otherwise, this is a non-namesapce decl, so it's owned by its
+          // module in both C++ and Swift meaning we can proceed normally.
+          dc = extensionDC;
+        }
+      }
+      auto *enumDecl = Impl.createDeclWithClangNode<EnumDecl>(
           decl, AccessLevel::Public, loc,
           importedName.getDeclName().getBaseIdentifier(),
           Impl.importSourceLoc(decl->getLocation()), None, nullptr, dc);
-      enumDecl->setMemberLoader(&Impl, 0);
+      if (isa<clang::NamespaceDecl>(decl->getParent()))
+        cast<EnumDecl>(dc)->addMember(enumDecl);
+
+      // We are creating an extension, so put it at the top level. This is done
+      // after creating the enum, though, because we may need the "correctly"
+      // nested decl context above when creating the enum.
+      while (extensionDC->getParent() &&
+             extensionDC->getContextKind() != DeclContextKind::FileUnit)
+        extensionDC = extensionDC->getParent();
+
+      // Import all associated namespace decls at once.
+      SmallPtrSet<ExtensionDecl *, 2> extensions;
+      for (auto redecl : decl->redecls())
+        importNamespace(redecl, enumDecl, extensionDC, extensions);
+      // Add all the extensions at once because we might modify the same
+      // extension decl multiple times while in the loop above.
+      for (auto extension : extensions)
+        enumDecl->addExtension(extension);
+
       return enumDecl;
+    }
+
+    void importNamespace(const clang::NamespaceDecl *decl, EnumDecl *enumDecl,
+                         DeclContext *extensionDC,
+                         SmallPtrSetImpl<ExtensionDecl *> &extensions) {
+      SourceLoc loc = Impl.importSourceLoc(decl->getBeginLoc());
+      auto *extension = ExtensionDecl::create(Impl.SwiftContext, loc, nullptr,
+                                              {}, extensionDC, nullptr, decl);
+      Impl.SwiftContext.evaluator.cacheOutput(ExtendedTypeRequest{extension},
+                                              enumDecl->getDeclaredType());
+      Impl.SwiftContext.evaluator.cacheOutput(ExtendedNominalRequest{extension},
+                                              enumDecl);
+      // This will be re-set as the enum after we return from
+      // "VisitNamespaceDecl."
+      Impl.ImportedDecls[{decl->getCanonicalDecl(), getVersion()}] = extension;
+
+      for (auto m : decl->decls()) {
+        auto nd = dyn_cast<clang::NamedDecl>(m);
+        // Make sure we only import the defenition of a function or record.
+        if (auto fn = dyn_cast_or_null<clang::FunctionDecl>(nd))
+          nd = fn->getDefinition();
+        if (auto tagDecl = dyn_cast_or_null<clang::TagDecl>(nd))
+          nd = tagDecl->getDefinition();
+        if (!nd ||
+            // Importing a member that is defined in this namespace but declared
+            // elsewhere will cause problems. Simply wait until we find where
+            // its declared and import it then.
+            nd->getDeclContext() != decl ||
+            // Skip already-imported decls so we don't import the same member
+            // twice.
+            Impl.ImportedDecls.count({nd->getCanonicalDecl(), getVersion()}))
+          continue;
+        auto member = Impl.importDecl(nd, getVersion());
+        // We want to import but not add namespaces. That happens when importing
+        // the decl context.
+        if (!member || isa<clang::NamespaceDecl>(nd))
+          continue;
+        extension->addMember(member);
+      }
+
+      extensions.insert(extension);
     }
 
     Decl *VisitUsingDirectiveDecl(const clang::UsingDirectiveDecl *decl) {
@@ -8418,6 +8497,7 @@ DeclContext *ClangImporter::Implementation::importDeclContextImpl(
   auto decl = dyn_cast<clang::NamedDecl>(dc);
   if (!decl)
     return nullptr;
+
   // Category decls with same name can be merged and using canonical decl always
   // leads to the first category of the given name. We'd like to keep these
   // categories separated.

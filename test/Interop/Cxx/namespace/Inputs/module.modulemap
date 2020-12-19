@@ -1,0 +1,7 @@
+module Namespaces {
+  header "namespaces.h"
+}
+
+module NamespaceDefs {
+  header "namespace-defs.h"
+}
