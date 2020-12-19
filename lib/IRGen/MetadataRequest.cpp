@@ -2937,6 +2937,7 @@ public:
     case SILFunctionType::Representation::Method:
     case SILFunctionType::Representation::WitnessMethod:
     case SILFunctionType::Representation::ObjCMethod:
+    case SILFunctionType::Representation::CXXMethod:
     case SILFunctionType::Representation::CFunctionPointer:
     case SILFunctionType::Representation::Closure:
       // A thin function looks like a plain pointer.
@@ -3136,6 +3137,7 @@ namespace {
       case SILFunctionType::Representation::Method:
       case SILFunctionType::Representation::WitnessMethod:
       case SILFunctionType::Representation::ObjCMethod:
+      case SILFunctionType::Representation::CXXMethod:
       case SILFunctionType::Representation::CFunctionPointer:
       case SILFunctionType::Representation::Closure:
         // A thin function looks like a plain pointer.

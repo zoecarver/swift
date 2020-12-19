@@ -3949,7 +3949,8 @@ namespace {
                   clang::DeclarationName::CXXOperatorName) {
             selfIdx = None;
           } else {
-            selfIdx = 0;
+            // Swift imports the "self" param last, even for clang functions.
+            selfIdx = bodyParams ? bodyParams->size() : 0;
             // Workaround until proper const support is handled: Force
             // everything to be mutating. This implicitly makes the parameter
             // indirect.

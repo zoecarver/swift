@@ -1695,6 +1695,7 @@ void ASTMangler::appendImplFunctionType(SILFunctionType *fn) {
       OpArgs.push_back('B');
       appendClangTypeToVec(OpArgs);
       break;
+    case SILFunctionTypeRepresentation::CXXMethod:
     case SILFunctionTypeRepresentation::CFunctionPointer:
       if (!mangleClangType) {
         OpArgs.push_back('C');
