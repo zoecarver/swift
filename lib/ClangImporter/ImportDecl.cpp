@@ -2463,9 +2463,15 @@ namespace {
         // that we add this to the parent enum (in the "__ObjC" module) and not
         // the extension.
         if (auto parentNS = dyn_cast<clang::NamespaceDecl>(decl->getParent())) {
-          auto ext =
-              cast<ExtensionDecl>(Impl.importDecl(parentNS, getVersion()));
-          dc = ext->getExtendedType()->getEnumOrBoundGenericEnum();
+          auto parent = Impl.importDecl(parentNS, getVersion());
+          assert(parent);
+          auto found = Impl.ImportedDecls.find({decl->getCanonicalDecl(), getVersion()});
+          if (found != Impl.ImportedDecls.end())
+            return found->second;
+          if (auto ext = dyn_cast<ExtensionDecl>(parent))
+            dc = ext->getExtendedType()->getEnumOrBoundGenericEnum();
+          else
+            llvm_unreachable("What??");
         } else {
           // Otherwise, this is a non-namesapce decl, so it's owned by its
           // module in both C++ and Swift meaning we can proceed normally.
@@ -2476,8 +2482,6 @@ namespace {
           decl, AccessLevel::Public, loc,
           importedName.getDeclName().getBaseIdentifier(),
           Impl.importSourceLoc(decl->getLocation()), None, nullptr, dc);
-      if (isa<clang::NamespaceDecl>(decl->getParent()))
-        cast<EnumDecl>(dc)->addMember(enumDecl);
 
       // We are creating an extension, so put it at the top level. This is done
       // after creating the enum, though, because we may need the "correctly"
@@ -2487,56 +2491,73 @@ namespace {
         extensionDC = extensionDC->getParent();
 
       // Import all associated namespace decls at once.
-      SmallPtrSet<ExtensionDecl *, 2> extensions;
-      for (auto redecl : decl->redecls())
-        importNamespace(redecl, enumDecl, extensionDC, extensions);
-      // Add all the extensions at once because we might modify the same
-      // extension decl multiple times while in the loop above.
-      for (auto extension : extensions)
-        enumDecl->addExtension(extension);
-
-      return enumDecl;
-    }
-
-    void importNamespace(const clang::NamespaceDecl *decl, EnumDecl *enumDecl,
-                         DeclContext *extensionDC,
-                         SmallPtrSetImpl<ExtensionDecl *> &extensions) {
-      SourceLoc loc = Impl.importSourceLoc(decl->getBeginLoc());
       auto *extension = ExtensionDecl::create(Impl.SwiftContext, loc, nullptr,
                                               {}, extensionDC, nullptr, decl);
       Impl.SwiftContext.evaluator.cacheOutput(ExtendedTypeRequest{extension},
                                               enumDecl->getDeclaredType());
       Impl.SwiftContext.evaluator.cacheOutput(ExtendedNominalRequest{extension},
                                               enumDecl);
+      for (auto redecl : decl->redecls())
+        importNamespace(redecl, enumDecl, extension);
+      
+      if (!extension->getMembers().empty())
+        enumDecl->addExtension(extension);
+
+      return enumDecl;
+    }
+
+    void importNamespace(const clang::NamespaceDecl *decl, EnumDecl *enumDecl,
+                         ExtensionDecl *extension) {
       // This will be re-set as the enum after we return from
       // "VisitNamespaceDecl."
       Impl.ImportedDecls[{decl->getCanonicalDecl(), getVersion()}] = extension;
+      Impl.ImportedDecls[{decl, getVersion()}] = extension;
 
-      for (auto m : decl->decls()) {
-        auto nd = dyn_cast<clang::NamedDecl>(m);
+      SmallVector<clang::Decl *, 16> namespaceDecls;
+      namespaceDecls.insert(namespaceDecls.end(), decl->decls_begin(),
+                            decl->decls_end());
+      while (!namespaceDecls.empty()) {
+        auto nd = dyn_cast<clang::NamedDecl>(namespaceDecls.pop_back_val());
         // Make sure we only import the defenition of a function or record.
         if (auto fn = dyn_cast_or_null<clang::FunctionDecl>(nd))
           nd = fn->getDefinition();
         if (auto tagDecl = dyn_cast_or_null<clang::TagDecl>(nd))
           nd = tagDecl->getDefinition();
-        if (!nd ||
+        if (!nd || Impl.ImportedDecls.count({nd->getCanonicalDecl(), getVersion()}))
             // Importing a member that is defined in this namespace but declared
             // elsewhere will cause problems. Simply wait until we find where
             // its declared and import it then.
-            nd->getDeclContext() != decl ||
+            // nd->getDeclContext() != decl)
             // Skip already-imported decls so we don't import the same member
             // twice.
-            Impl.ImportedDecls.count({nd->getCanonicalDecl(), getVersion()}))
+            // visitedSubDecls.count(nd))
           continue;
+
+        // Special case class templates: import all their specilizations here.
+        if (auto classTemplate = dyn_cast<clang::ClassTemplateDecl>(nd)) {
+          namespaceDecls.insert(namespaceDecls.end(),
+                                classTemplate->spec_begin(),
+                                classTemplate->spec_end());
+          continue;
+        }
+
         auto member = Impl.importDecl(nd, getVersion());
         // We want to import but not add namespaces. That happens when importing
         // the decl context.
-        if (!member || isa<clang::NamespaceDecl>(nd))
+        if (!member)
           continue;
+            // TODO: fix
+        if (isa<clang::NamespaceDecl>(nd)) {
+          enumDecl->addMember(member);
+          continue;
+        }
+        // TODO: fix this. It happens when we declare a struct inside another struct inside a namesapce then define it out of line.
+        assert(member->getDeclContext()->getAsDecl());
+        if (dyn_cast<ExtensionDecl>(member->getDeclContext()->getAsDecl()) != extension)
+          continue;
+        // member->setDeclContext(extension);
         extension->addMember(member);
       }
-
-      extensions.insert(extension);
     }
 
     Decl *VisitUsingDirectiveDecl(const clang::UsingDirectiveDecl *decl) {
@@ -3383,9 +3404,9 @@ namespace {
       // nested structs. The "Parent" struct will import the "Child" struct
       // at which point it attempts to import its decl context which is the
       // "Parent" struct. Without caching this will cause an infinite loop.
-      auto cachedResult = Impl.ImportedDecls.find({decl, getVersion()});
+      auto cachedResult = Impl.ImportedDecls.find({decl->getCanonicalDecl(), getVersion()});
       if (cachedResult != Impl.ImportedDecls.end()) {
-        result = cast<StructDecl>(cachedResult->second);
+        return cachedResult->second;
       } else {
         result = Impl.createDeclWithClangNode<StructDecl>(
             decl, AccessLevel::Public,
@@ -3393,6 +3414,9 @@ namespace {
             Impl.importSourceLoc(decl->getLocation()), None, nullptr, dc);
         Impl.ImportedDecls[{decl->getCanonicalDecl(), getVersion()}] = result;
       }
+
+      if (isa<clang::NamespaceDecl>(decl->getParent()))
+        assert(isa<ExtensionDecl>(dc));
 
       // FIXME: Figure out what to do with superclasses in C++. One possible
       // solution would be to turn them into members and add conversion
@@ -3475,6 +3499,18 @@ namespace {
         }
 
         if (auto subType = dyn_cast<TypeDecl>(member)) {
+          // If this is not the def, don't import it. For case:
+//          struct Parent {
+//            struct A;
+//            struct B { };
+//            struct A { };
+//          };
+          if (auto fn = dyn_cast<clang::FunctionDecl>(nd))
+            if (fn->getDefinition() != fn)
+              continue;
+          if (auto tagDecl = dyn_cast<clang::TagDecl>(nd))
+            if (tagDecl->getDefinition() != tagDecl)
+              continue;
           memberTypes.push_back(subType);
           continue;
         }
@@ -3558,6 +3594,7 @@ namespace {
                                      /*wantBody=*/true);
           ctors.push_back(valueCtor);
         }
+
         result->addMember(member);
       }
 
@@ -3675,23 +3712,15 @@ namespace {
       // instantiation failures in them), which can be more than is necessary
       // and is more than what Clang does. As a result we reject some C++
       // programs that Clang accepts.
-      Impl.getClangSema().InstantiateClassTemplateSpecializationMembers(
-          def->getLocation(), def, clang::TSK_ExplicitInstantiationDefinition);
+//      Impl.getClangSema().InstantiateClassTemplateSpecializationMembers(
+//          def->getLocation(), def, clang::TSK_ExplicitInstantiationDefinition);
+
+      for (auto subDecl : def->decls()) {
+        if (auto typed = dyn_cast<clang::TypeDecl>(subDecl))
+          typed->getTypeForDecl();
+      }
 
       return VisitCXXRecordDecl(def);
-    }
-
-    Decl *VisitClassTemplateDecl(const clang::ClassTemplateDecl *decl) {
-      // When loading a namespace's sub-decls, we won't add template
-      // specilizations, so make sure to do that here.
-      for (auto spec : decl->specializations()) {
-        if (auto importedSpec = Impl.importDecl(spec, getVersion())) {
-          if (auto namespaceDecl =
-                  dyn_cast<EnumDecl>(importedSpec->getDeclContext()))
-            namespaceDecl->addMember(importedSpec);
-        }
-      }
-      return nullptr;
     }
 
     Decl *VisitClassTemplatePartialSpecializationDecl(
@@ -4328,6 +4357,9 @@ namespace {
         return nullptr;
       
       Decl *SwiftDecl = Impl.importDecl(decl->getUnderlyingDecl(), getActiveSwiftVersion());
+//      if (!SwiftDecl)
+//        return nullptr;
+
       const TypeDecl *SwiftTypeDecl = dyn_cast<TypeDecl>(SwiftDecl);
       
       if (!SwiftTypeDecl)

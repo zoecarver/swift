@@ -30,6 +30,8 @@
 #include <functional>
 #include <utility>
 
+struct Foo { };
+
 namespace swift {
 
 class DominanceInfo;

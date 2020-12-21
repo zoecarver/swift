@@ -1,0 +1,4 @@
+module SILOptimizer {
+  header "/Users/zoe/Developer/swift-source/swift/include/swift/SILOptimizer/PassManager/Transforms.h"
+  // header "/Users/zoe/Developer/swift-source/swift/include/swift/SILOptimizer/Utils/InstOptUtils.h"
+}

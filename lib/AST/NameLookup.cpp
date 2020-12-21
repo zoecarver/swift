@@ -1192,6 +1192,11 @@ void MemberLookupTable::addMember(Decl *member) {
 }
 
 void MemberLookupTable::addMembers(DeclRange members) {
+//  if (*members.end() == nullptr) {
+//    addMember(*members.begin());
+//    return;
+//  }
+
   for (auto member : members) {
     addMember(member);
   }

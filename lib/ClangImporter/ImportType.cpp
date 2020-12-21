@@ -735,6 +735,8 @@ namespace {
       if (!decl) return Visit(type->desugar());
 
       Type mappedType = decl->getDeclaredInterfaceType();
+//      if (auto typeAlias = dyn_cast<TypeAliasType>(mappedType.getPointer()))
+//        mappedType = typeAlias->getDecl()->getUnderlyingType();
 
       if (getSwiftNewtypeAttr(type->getDecl(), Impl.CurrentVersion)) {
         auto underlying = Visit(type->getDecl()->getUnderlyingType());
