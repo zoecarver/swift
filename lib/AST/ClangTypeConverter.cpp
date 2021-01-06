@@ -33,6 +33,7 @@
 #include "swift/AST/Type.h"
 #include "swift/AST/TypeVisitor.h"
 #include "swift/Basic/LLVM.h"
+#include "swift/ClangImporter/ClangModule.h"
 
 #include "clang/AST/ASTContext.h"
 #include "clang/Basic/TargetInfo.h"
@@ -291,8 +292,36 @@ clang::QualType ClangTypeConverter::visitStructType(StructType *type) {
       return convert(t);
   }
 
-  // Out of ideas, there must've been some error. :(
-  return clang::QualType();
+  // TODO: Handle nested decls.
+  if (swiftDecl->getDeclContext()->getContextKind() != DeclContextKind::FileUnit)
+    return clang::QualType();
+
+  auto dc = clang::TranslationUnitDecl::Create(ctx);
+  // OK, we need to create this RecordType from scratch.
+  auto record = clang::CXXRecordDecl::Create(ctx, clang::TTK_Struct, dc,
+                                          clang::SourceLocation(),
+                                          clang::SourceLocation(),
+                                          &ctx.Idents.get(type->getNominalOrBoundGenericNominal()->getName().str()));
+  record->startDefinition();
+  
+  for (auto member : swiftDecl->getMembers()) {
+    if (auto swiftField = dyn_cast<VarDecl>(member)) {
+      assert(!isa<AccessorDecl>(swiftField));
+      auto memberType = visit(swiftField->getType());
+      if (!memberType.getTypePtrOrNull())
+        return clang::QualType();
+      auto field = clang::FieldDecl::Create(ctx, record,
+                                            clang::SourceLocation(), clang::SourceLocation(),
+                                            &ctx.Idents.get(swiftField->getName().str()),
+                                            memberType, nullptr, nullptr, false,
+                                            clang::ICIS_ListInit);
+      field->setAccess(clang::AS_public);
+      record->addDecl(field);
+    }
+  }
+  record->setCompleteDefinition();
+
+  return clang::QualType(record->getTypeForDecl(), 0);
 }
 
 static clang::QualType
