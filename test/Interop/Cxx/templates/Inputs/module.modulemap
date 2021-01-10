@@ -82,3 +82,8 @@ module MemberTemplates {
   header "member-templates.h"
   requires cplusplus
 }
+
+module SubstSwiftType {
+  header "subst-swift-type.h"
+  requires cplusplus
+}
