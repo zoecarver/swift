@@ -3611,14 +3611,6 @@ namespace {
       auto def = dyn_cast<clang::ClassTemplateSpecializationDecl>(
           decl->getDefinition());
       assert(def && "Class template instantiation didn't have definition");
-
-      // FIXME: This will instantiate all members of the specialization (and detect
-      // instantiation failures in them), which can be more than is necessary
-      // and is more than what Clang does. As a result we reject some C++
-      // programs that Clang accepts.
-      Impl.getClangSema().InstantiateClassTemplateSpecializationMembers(
-          def->getLocation(), def, clang::TSK_ExplicitInstantiationDefinition);
-
       return VisitCXXRecordDecl(def);
     }
 
