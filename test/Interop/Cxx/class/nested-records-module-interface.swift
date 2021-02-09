@@ -65,3 +65,12 @@
 // CHECK:   }
 // CHECK:   init()
 // CHECK: }
+
+// CHECK: enum Space {
+// CHECK:   struct ForwardDeclaresFriend {
+// CHECK:     init()
+// CHECK:   }
+// CHECK:   struct ForwardDeclaredFriend {
+// CHECK:   }
+// CHECK:   static func takesFriend(_ b: Space.ForwardDeclaredFriend)
+// CHECK: }

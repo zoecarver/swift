@@ -53,4 +53,27 @@ struct HasForwardDeclaredNestedType {
 
 // TODO: Nested class templates (SR-13853).
 
+namespace Space {
+
+struct ForwardDeclaresFriend {
+  friend struct ForwardDeclaredFriend;
+  friend void takesFriend(struct ForwardDeclaredFriend f);
+};
+
+struct ForwardDeclaredFriend { };
+
+void takesFriend(ForwardDeclaredFriend b) { }
+
+struct HasNestedForwardDeclaration {
+  struct IsNestedForwardDeclaration;
+};
+
+struct HasNestedForwardDeclaration::IsNestedForwardDeclaration {
+  int a;
+};
+
+void takesHasNestedForwardDeclaration(HasNestedForwardDeclaration) { }
+
+}
+
 #endif // TEST_INTEROP_CXX_CLASS_INPUTS_NESTED_RECORDS_H
