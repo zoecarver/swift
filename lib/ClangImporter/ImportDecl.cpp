@@ -3468,6 +3468,10 @@ namespace {
           }
         }
 
+        // If we've already imported it, continue. Don't add it again.
+        if (Impl.ImportedDecls.count({nd->getCanonicalDecl(), Impl.CurrentVersion}))
+          continue;
+
         auto member = Impl.importDecl(nd, getActiveSwiftVersion());
         if (!member) {
           if (!isa<clang::TypeDecl>(nd) && !isa<clang::FunctionDecl>(nd)) {
@@ -3482,9 +3486,9 @@ namespace {
         if (auto nestedType = dyn_cast<TypeDecl>(member)) {
           // Only import definitions. Otherwise, we might add the same member
           // twice.
-          if (auto tagDecl = dyn_cast<clang::TagDecl>(nd))
-            if (tagDecl->getDefinition() != tagDecl)
-              continue;
+//          if (auto tagDecl = dyn_cast<clang::gtra>(nd))
+//            if (tagDecl->getDefinition() != tagDecl)
+//              continue;
           nestedTypes.push_back(nestedType);
           continue;
         }
@@ -3654,6 +3658,8 @@ namespace {
       // in CanDeclareSpecialMemberFunction in Clang's SemaLookup.cpp).
       if (decl->getDefinition() && !decl->isBeingDefined() &&
           !decl->isDependentContext()) {
+        if (decl->defaultedCopyConstructorIsDeleted())
+          return nullptr;
         if (decl->needsImplicitDefaultConstructor()) {
           clang::CXXConstructorDecl *ctor =
               clangSema.DeclareImplicitDefaultConstructor(
@@ -3691,6 +3697,18 @@ namespace {
 
       return VisitRecordDecl(decl);
     }
+    
+    unsigned countTemplateDepth(const clang::ClassTemplateSpecializationDecl * decl) {
+      unsigned out = 0;
+      for (auto arg : decl->getTemplateArgs().asArray()) {
+        if (arg.getKind() == clang::TemplateArgument::Type) {
+          auto type = arg.getAsType();
+          if (auto classSpec = dyn_cast_or_null<clang::ClassTemplateSpecializationDecl>(type->getAsCXXRecordDecl()))
+            out += countTemplateDepth(classSpec) + 1;
+        }
+      }
+      return out;
+    }
 
     Decl *VisitClassTemplateSpecializationDecl(
                  const clang::ClassTemplateSpecializationDecl *decl) {
@@ -3708,6 +3726,10 @@ namespace {
       auto def = dyn_cast<clang::ClassTemplateSpecializationDecl>(
           decl->getDefinition());
       assert(def && "Class template instantiation didn't have definition");
+
+      if (countTemplateDepth(def) > 5)
+        return nullptr;
+
       return VisitCXXRecordDecl(def);
     }
 
@@ -8307,6 +8329,9 @@ ClangImporter::Implementation::importDeclImpl(const clang::NamedDecl *ClangDecl,
                                               bool &TypedefIsSuperfluous,
                                               bool &HadForwardDeclaration) {
   assert(ClangDecl);
+
+  if (ClangDecl->isInvalidDecl())
+    return nullptr;
 
   // Private and protected C++ class members should never be used, so we skip
   // them entirely (instead of importing them with a corresponding Swift access

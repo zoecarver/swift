@@ -822,29 +822,30 @@ namespace {
         return underlyingResult;
       }
 
-#ifndef NDEBUG
-      switch (underlyingResult.Hint) {
-      case ImportHint::Block:
-      case ImportHint::ObjCBridged:
-        // Bridging is fine for Objective-C and blocks.
-        break;
-      case ImportHint::NSUInteger:
-        // NSUInteger might be imported as Int rather than UInt depending
-        // on where the import lives.
-        if (underlyingResult.AbstractType->getAnyNominal() ==
-            Impl.SwiftContext.getIntDecl())
-          break;
-        LLVM_FALLTHROUGH;
-      default:
-        if (!underlyingResult.AbstractType->isEqual(mappedType)) {
-          underlyingResult.AbstractType->dump(llvm::errs());
-          mappedType->dump(llvm::errs());
-        }
-        assert(underlyingResult.AbstractType->isEqual(mappedType) &&
-               "typedef without special typedef kind was mapped "
-               "differently from its underlying type?");
-      }
-#endif
+//#ifndef NDEBUG
+//      switch (underlyingResult.Hint) {
+//      case ImportHint::Block:
+//      case ImportHint::ObjCBridged:
+//        // Bridging is fine for Objective-C and blocks.
+//        break;
+//      case ImportHint::NSUInteger:
+//        // NSUInteger might be imported as Int rather than UInt depending
+//        // on where the import lives.
+//        if (underlyingResult.AbstractType->getAnyNominal() ==
+//            Impl.SwiftContext.getIntDecl())
+//          break;
+//        LLVM_FALLTHROUGH;
+//      default:
+//        if (!underlyingResult.AbstractType->isEqual(mappedType)) {
+//          return ImportResult();
+////          underlyingResult.AbstractType->dump(llvm::errs());
+////          mappedType->dump(llvm::errs());
+//        }
+////        assert(underlyingResult.AbstractType->isEqual(mappedType) &&
+////               "typedef without special typedef kind was mapped "
+////               "differently from its underlying type?");
+//      }
+//#endif
 
       // If the imported typealias is unavailable, return the underlying type.
       if (decl->getAttrs().isUnavailable(Impl.SwiftContext))
@@ -864,7 +865,6 @@ namespace {
     MAYBE_SUGAR_TYPE(TypeOf)
     MAYBE_SUGAR_TYPE(Decltype)
     MAYBE_SUGAR_TYPE(UnaryTransform)
-    MAYBE_SUGAR_TYPE(TemplateSpecialization)
     MAYBE_SUGAR_TYPE(Auto)
     MAYBE_SUGAR_TYPE(DeducedTemplateSpecialization)
 
@@ -878,6 +878,20 @@ namespace {
     SUGAR_TYPE(Adjusted)
     SUGAR_TYPE(SubstTemplateTypeParm)
     SUGAR_TYPE(Elaborated)
+
+    ImportResult VisitTemplateSpecializationType(const clang::TemplateSpecializationType *type) {
+      if (!type->getAsCXXRecordDecl())
+        return nullptr;
+
+      const auto *spec = dyn_cast<clang::ClassTemplateSpecializationDecl>(type->getAsCXXRecordDecl());
+      if (!spec)
+        return nullptr;
+
+      if (auto swiftDecl = Impl.importDecl(spec, Impl.CurrentVersion))
+        return cast<StructDecl>(swiftDecl)->getDeclaredInterfaceType();
+
+      return nullptr;
+    }
 
     ImportResult VisitDecayedType(const clang::DecayedType *type) {
       clang::ASTContext &clangCtx = Impl.getClangASTContext();
