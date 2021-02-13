@@ -4253,6 +4253,13 @@ namespace {
     AccessorDecl *tryCreateConstexprAccessor(const clang::VarDecl *clangVar,
                                              VarDecl *swiftVar) {
       assert(clangVar->isConstexpr());
+      // On Windows, Clang will not mark invalid decls as "invalid" so it is
+      // possible that we will get an invalid var decl here, in which case, we
+      // might not be able to get an evaluated value. If there is no evaluated
+      // value, the call to "evaluateValue" will fire an assertion, so we need
+      // to exit early here if that is the case.
+      if (!clangVar->ensureEvaluatedStmt()->Value)
+        return nullptr;
       clangVar->evaluateValue();
       auto evaluated = clangVar->getEvaluatedValue();
       if (!evaluated)
@@ -8318,6 +8325,10 @@ ClangImporter::Implementation::importDeclImpl(const clang::NamedDecl *ClangDecl,
                                               bool &TypedefIsSuperfluous,
                                               bool &HadForwardDeclaration) {
   assert(ClangDecl);
+
+  // If this decl isn't valid, don't import it. Bail now.
+  if (ClangDecl->isInvalidDecl())
+    return nullptr;
 
   // Private and protected C++ class members should never be used, so we skip
   // them entirely (instead of importing them with a corresponding Swift access
