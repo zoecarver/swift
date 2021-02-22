@@ -78,7 +78,7 @@
                 "ninja": "release",
                 "icu": "release-65-1",
                 "yams": "3.0.1",
-                "cmake": "v3.16.5",
+                "cmake": "v3.18.1",
                 "indexstore-db": "main",
                 "sourcekit-lsp": "main",
                 "swift-format": "main"
@@ -106,7 +106,7 @@
                 "ninja": "release",
                 "icu": "release-65-1",
                 "yams": "3.0.1",
-                "cmake": "v3.16.5",
+                "cmake": "v3.18.1",
                 "indexstore-db": "main",
                 "sourcekit-lsp": "main",
                 "swift-format": "main"
@@ -137,7 +137,7 @@
                 "ninja": "release",
                 "icu": "release-65-1",
                 "yams": "3.0.1",
-                "cmake": "v3.16.5",
+                "cmake": "v3.18.1",
                 "indexstore-db": "main",
                 "sourcekit-lsp": "main",
                 "swift-format": "main"

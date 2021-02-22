@@ -187,7 +187,7 @@ Double-check that running `pwd` prints a path ending with `swift`.
 
 ### Spot check dependencies
 
-* Run `cmake --version`: This should be 3.18.1 or higher for macOS.
+* Run `cmake --version`: This should be 3.18.1 or higher.
 * Run `python3 --version`: Check that this succeeds.
 * Run `ninja --version`: Check that this succeeds.
 * Run `sccache --version`: Check that this succeeds.
