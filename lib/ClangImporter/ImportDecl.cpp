@@ -2557,8 +2557,10 @@ namespace {
         }
       }
 
-      if (!extension->getMembers().empty())
+      if (!extension->getMembers().empty()) {
+//        extension->dump();
         enumDecl->addExtension(extension);
+      }
 
       return enumDecl;
     }
@@ -2674,7 +2676,14 @@ namespace {
                              clang::SwiftNewTypeAttr *newtypeAttr,
                              DeclContext *dc, Identifier name);
 
+    // Okay, here's how we're going to debug this mess:
+    //    1. Ensure that the below visitor is the one being called from import typedef type.
+    //    2. Figure out where SwiftType is being set.
+    //    3. Check what type we're passing the visitor that's being called in "2"
+    //    4. Reconsile the difference between that type and the pointer in the typedef type visitor.
     Decl *VisitTypedefNameDecl(const clang::TypedefNameDecl *Decl) {
+      Decl->dump();
+
       Optional<ImportedName> correctSwiftName;
       auto importedName = importFullName(Decl, correctSwiftName);
       auto Name = importedName.getDeclName().getBaseIdentifier();
@@ -3668,8 +3677,17 @@ namespace {
             clangSema.DefineImplicitDefaultConstructor(clang::SourceLocation(),
                                                        ctor);
         }
+
+        // We can't import types that we can't copy.
+        // Note to future me: see failure in compressed pair with a type that
+        // has a deleted copy ctor (i.e., a type that inherits from a type with
+        // deleted copy ctor).
+        if (decl->defaultedCopyConstructorIsDeleted())
+          return nullptr;
+        
         clang::CXXConstructorDecl *copyCtor = nullptr;
-        if (decl->needsImplicitCopyConstructor()) {
+        if (decl->needsImplicitCopyConstructor() &&
+            !decl->hasMoveAssignment() && !decl->hasMoveConstructor()) {
           copyCtor = clangSema.DeclareImplicitCopyConstructor(
               const_cast<clang::CXXRecordDecl *>(decl));
         } else {
@@ -3716,6 +3734,9 @@ namespace {
 
     Decl *VisitClassTemplateSpecializationDecl(
                  const clang::ClassTemplateSpecializationDecl *decl) {
+      if (isSpecializationDepthGreaterThan(decl, 4))
+        return nullptr;
+
       // `Sema::isCompleteType` will try to instantiate the class template as a
       // side-effect and we rely on this here. `decl->getDefinition()` can
       // return nullptr before the call to sema and return its definition
@@ -3735,8 +3756,8 @@ namespace {
       // consider increasing it, but this should keep compile time down,
       // especially for types that become exponentially large when
       // instantiating.
-      if (isSpecializationDepthGreaterThan(def, 8))
-        return nullptr;
+//      if (isSpecializationDepthGreaterThan(def, 32))
+//        return nullptr;
 
       return VisitCXXRecordDecl(def);
     }
@@ -3951,7 +3972,7 @@ namespace {
       ParameterList *bodyParams = nullptr;
       GenericParamList *genericParams = nullptr;
       SmallVector<GenericTypeParamDecl *, 4> templateParams;
-      if (funcTemplate) {
+      if (funcTemplate && funcTemplate->getTemplateParameters()->size()) {
         unsigned i = 0;
         for (auto param : *funcTemplate->getTemplateParameters()) {
           auto *typeParam = Impl.createDeclWithClangNode<GenericTypeParamDecl>(
@@ -4388,8 +4409,14 @@ namespace {
             return isa<clang::TemplateTypeParmDecl>(param);
           }))
         return nullptr;
+      // If all the params are defaulted, pretend like this isn't a funtion
+      // template. This is a hack so that we can still use functions that use
+      // SFINAE to be enabled/disabled.
+      bool allDefaulted = llvm::all_of(*decl->getTemplateParameters(), [](auto param) {
+        return cast<clang::TemplateTypeParmDecl>(param)->hasDefaultArgument();
+      });
       return importFunctionDecl(decl->getAsFunction(), importedName,
-                                correctSwiftName, None, decl);
+                                correctSwiftName, None, allDefaulted ? nullptr : decl);
     }
 
     Decl *VisitClassTemplateDecl(const clang::ClassTemplateDecl *decl) {
@@ -4457,6 +4484,9 @@ namespace {
         return nullptr;
       
       Decl *SwiftDecl = Impl.importDecl(decl->getUnderlyingDecl(), getActiveSwiftVersion());
+      if (!SwiftDecl)
+        return nullptr;
+
       const TypeDecl *SwiftTypeDecl = dyn_cast<TypeDecl>(SwiftDecl);
       
       if (!SwiftTypeDecl)
@@ -4515,7 +4545,7 @@ namespace {
 
       // While importing the DeclContext, we might have imported the decl
       // itself.
-      if (auto Known = Impl.importDeclCached(decl, getVersion()))
+      if (auto Known = Impl.importDecl(decl, getVersion()))
         return Known;
 
       return importObjCMethodDecl(decl, dc, None);
@@ -5437,7 +5467,7 @@ namespace {
 
       // While importing the DeclContext, we might have imported the decl
       // itself.
-      if (auto Known = Impl.importDeclCached(decl, getVersion()))
+      if (auto Known = Impl.importDecl(decl, getVersion()))
         return Known;
 
       return importObjCPropertyDecl(decl, dc);
@@ -7822,7 +7852,7 @@ void SwiftDeclConverter::importInheritedConstructors(
   }
 }
 
-Decl *ClangImporter::Implementation::importDeclCached(
+Optional<Decl *> ClangImporter::Implementation::importDeclCached(
     const clang::NamedDecl *ClangDecl,
     ImportNameVersion version,
     bool UseCanonical) {
@@ -7831,7 +7861,7 @@ Decl *ClangImporter::Implementation::importDeclCached(
   if (Known != ImportedDecls.end())
     return Known->second;
 
-  return nullptr;
+  return None;
 }
 
 /// Checks if we don't need to import the typedef itself.  If the typedef
@@ -8570,7 +8600,7 @@ Decl *ClangImporter::Implementation::importDeclAndCacheImpl(
     if (!SuperfluousTypedefsAreTransparent &&
         SuperfluousTypedefs.count(Canon))
       return nullptr;
-    return Known;
+    return Known.getValue();
   }
 
   bool TypedefIsSuperfluous = false;
@@ -8579,8 +8609,10 @@ Decl *ClangImporter::Implementation::importDeclAndCacheImpl(
   startedImportingEntity();
   Decl *Result = importDeclImpl(ClangDecl, version, TypedefIsSuperfluous,
                                 HadForwardDeclaration);
-  if (!Result)
+  if (!Result) {
+    ImportedDecls[{Canon, version}] = nullptr;
     return nullptr;
+  }
 
   if (TypedefIsSuperfluous) {
     SuperfluousTypedefs.insert(Canon);
