@@ -724,8 +724,6 @@ namespace {
     }
 
     ImportResult VisitTypedefType(const clang::TypedefType *type) {
-      llvm::errs() << "VisitTypedefType\n";
-
       // If the underlying declaration is an Objective-C type parameter,
       // pull the corresponding generic type parameter from the imported class.
       if (auto *objcTypeParamDecl =
@@ -741,8 +739,6 @@ namespace {
 
       // If that fails, fall back on importing the underlying type.
       if (!decl) return Visit(type->desugar());
-      
-      decl->dump();
 
       Type mappedType = decl->getDeclaredInterfaceType();
 
@@ -841,7 +837,6 @@ namespace {
         LLVM_FALLTHROUGH;
       default:
         if (!underlyingResult.AbstractType->isEqual(mappedType)) {
-          llvm::errs() << "Incomplete = " << type->desugar()->isIncompleteType() << "\n";
           underlyingResult.AbstractType->dump(llvm::errs());
           mappedType->dump(llvm::errs());
         }

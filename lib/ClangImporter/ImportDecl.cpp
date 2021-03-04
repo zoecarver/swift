@@ -2682,8 +2682,6 @@ namespace {
     //    3. Check what type we're passing the visitor that's being called in "2"
     //    4. Reconsile the difference between that type and the pointer in the typedef type visitor.
     Decl *VisitTypedefNameDecl(const clang::TypedefNameDecl *Decl) {
-      Decl->dump();
-
       Optional<ImportedName> correctSwiftName;
       auto importedName = importFullName(Decl, correctSwiftName);
       auto Name = importedName.getDeclName().getBaseIdentifier();
@@ -8600,6 +8598,18 @@ Decl *ClangImporter::Implementation::importDeclAndCacheImpl(
     if (!SuperfluousTypedefsAreTransparent &&
         SuperfluousTypedefs.count(Canon))
       return nullptr;
+    
+    if (isa<TypeAliasDecl>(Known.getValue())) {
+      bool TypedefIsSuperfluous = false;
+      bool HadForwardDeclaration = false;
+      auto reImport = importDeclImpl(ClangDecl, version, TypedefIsSuperfluous,
+                                      HadForwardDeclaration);
+      assert(reImport);
+      auto *knownTypeAlias = cast<TypeAliasDecl>(Known.getValue());
+      auto *newTypeAlias = cast<TypeAliasDecl>(reImport);
+      assert(knownTypeAlias->getUnderlyingType()->isEqual(newTypeAlias->getUnderlyingType()));
+    }
+
     return Known.getValue();
   }
 
@@ -8610,7 +8620,7 @@ Decl *ClangImporter::Implementation::importDeclAndCacheImpl(
   Decl *Result = importDeclImpl(ClangDecl, version, TypedefIsSuperfluous,
                                 HadForwardDeclaration);
   if (!Result) {
-    ImportedDecls[{Canon, version}] = nullptr;
+     ImportedDecls[{Canon, version}] = nullptr;
     return nullptr;
   }
 
