@@ -3422,6 +3422,36 @@ namespace {
       result = Impl.createDeclWithClangNode<StructDecl>(
           decl, AccessLevel::Public, Impl.importSourceLoc(decl->getBeginLoc()),
           name, Impl.importSourceLoc(decl->getLocation()), None, nullptr, dc);
+
+      // Check whether this record is trivial. During this check, we might
+      // discover that this record is unimportable, so it's important that this
+      // check happens before we cache the decl or import any of its members.
+      const clang::CXXRecordDecl *cxxRecordDecl =
+          dyn_cast<clang::CXXRecordDecl>(decl);
+      if (cxxRecordDecl) {
+        result->setIsCxxNonTrivial(!cxxRecordDecl->isTriviallyCopyable());
+
+        for (auto ctor : cxxRecordDecl->ctors()) {
+          if (ctor->isCopyConstructor()) {
+            // If we have no way of copying the type we can't import the class
+            // at all because we cannot express the correct semantics as a swift
+            // struct.
+            if (ctor->isDeleted() || ctor->getAccess() != clang::AS_public)
+              return nullptr;
+          }
+          if (ctor->getAccess() != clang::AS_public) {
+            result->setIsCxxNonTrivial(true);
+            break;
+          }
+        }
+
+        if (auto dtor = cxxRecordDecl->getDestructor()) {
+          if (dtor->isDeleted() || dtor->getAccess() != clang::AS_public) {
+            return nullptr;
+          }
+        }
+      }
+
       Impl.ImportedDecls[{decl->getCanonicalDecl(), getVersion()}] = result;
 
       // FIXME: Figure out what to do with superclasses in C++. One possible
@@ -3582,8 +3612,6 @@ namespace {
         result->addMember(member);
       }
 
-      const clang::CXXRecordDecl *cxxRecordDecl =
-          dyn_cast<clang::CXXRecordDecl>(decl);
       if (hasZeroInitializableStorage && !cxxRecordDecl) {
         // Add default constructor for the struct if compiling in C mode.
         // If we're compiling for C++, we'll import the C++ default constructor
@@ -3623,30 +3651,6 @@ namespace {
       }
 
       result->setHasUnreferenceableStorage(hasUnreferenceableStorage);
-
-      if (cxxRecordDecl) {
-        result->setIsCxxNonTrivial(!cxxRecordDecl->isTriviallyCopyable());
-
-        for (auto ctor : cxxRecordDecl->ctors()) {
-          if (ctor->isCopyConstructor()) {
-            // If we have no way of copying the type we can't import the class
-            // at all because we cannot express the correct semantics as a swift
-            // struct.
-            if (ctor->isDeleted() || ctor->getAccess() != clang::AS_public)
-              return nullptr;
-          }
-          if (ctor->getAccess() != clang::AS_public) {
-            result->setIsCxxNonTrivial(true);
-            break;
-          }
-        }
-
-        if (auto dtor = cxxRecordDecl->getDestructor()) {
-          if (dtor->isDeleted() || dtor->getAccess() != clang::AS_public) {
-            return nullptr;
-          }
-        }
-      }
 
       return result;
     }
@@ -8598,17 +8602,6 @@ Decl *ClangImporter::Implementation::importDeclAndCacheImpl(
     if (!SuperfluousTypedefsAreTransparent &&
         SuperfluousTypedefs.count(Canon))
       return nullptr;
-    
-    if (isa<TypeAliasDecl>(Known.getValue())) {
-      bool TypedefIsSuperfluous = false;
-      bool HadForwardDeclaration = false;
-      auto reImport = importDeclImpl(ClangDecl, version, TypedefIsSuperfluous,
-                                      HadForwardDeclaration);
-      assert(reImport);
-      auto *knownTypeAlias = cast<TypeAliasDecl>(Known.getValue());
-      auto *newTypeAlias = cast<TypeAliasDecl>(reImport);
-      assert(knownTypeAlias->getUnderlyingType()->isEqual(newTypeAlias->getUnderlyingType()));
-    }
 
     return Known.getValue();
   }
